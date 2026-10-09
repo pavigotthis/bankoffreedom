@@ -148,7 +148,7 @@ Create separate student and parent analytical maps using the supplied eighteen s
 Two eighteen-stage journey maps; not portal navigation.
 
 Workflow integrity and admin visibility
-For each step, admin can inspect input received, evidence extracted, transformation performed, output produced, confidence and gaps, and output passed downstream. 
+For each step, admin can inspect input received, evidence extracted, transformation performed, output produced, confidence and gaps, and output passed downstream.
 Validate structured outputs. Invalid output, provider failure or retry must be visible; partial results must not publish. If an AI provider is needed, its provider and credentials must be configured securely; do not fabricate generated reports if unavailable.
 An upstream edit marks dependent outputs as needing review. Rerun affected downstream steps before presenting them as current.
 Mapping generation follows required assessments, mentor interview and activities. The readiness criteria are TBD; configure them explicitly before build.
