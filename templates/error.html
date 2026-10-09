@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<section class="auth panel"><p class="eyebrow">{{ status }}</p><h1>Let’s pause here</h1><p role="alert">{{ message }}</p><a class="button" href="{{ '/portal' if user else '/login' }}">{{ 'Return to your workspace' if user else 'Sign in' }}</a></section>{% endblock %}

@@ -1,0 +1,384 @@
+Source: supplied 3DU PRD.docx (the uploaded filename differs from the prompt's 3DU PRD(1).docx). Full document text extracted before implementation. Referenced video, prototype screens and detailed mapping specification were not supplied or read.
+
+3DU Product Requirements Document
+Career discovery and mentorship platform for students in Classes 9–12
+1. Purpose and decision context
+This PRD defines the requirements for a persistent, role-based 3DU platform that helps students understand themselves, explore career possibilities and learn from real professionals. It records confirmed behavior from the supplied implementation brief and prototype materials. It is not evidence that the prototype already provides a working backend, verified research findings or validated assessment instruments.
+The product should help a student make a better-informed next move without prescribing a final career. The supplied video frames the design problem as a shift from limited access to disconnected information; that is the project rationale, not an independently validated market claim.
+Problem to solve
+The objective and/or the problem to solve is to bring a student’s interests, demonstrated strengths, academic information, family perspectives, career exposure and practical constraints into a coherent guidance experience. The product must keep student and parent perspectives distinct, protect private information, and make progress and review status visible.
+Product goals
+Guide students through the specified nine-stage decision pipeline, while keeping progress visible and stage completion meaningful.
+Give students and linked parents access to the same approved six-map summary, while keeping raw evidence and internal review material private.
+Give administrators an inspectable four-step mapping workflow, versioned human review and controlled publication.
+Give mentors access only to records relevant to their actual involvement.
+Provide a public homepage that explains 3DU, its audiences and how it works without unsupported claims.
+Design principles
+Listen before labelling. Explore before deciding. Meet reality before committing. Treat generated insights as provisional until reviewed, keep missing evidence missing, and present personas as working summaries rather than diagnoses or permanent identities.
+How to read requirement status
+Label
+Meaning
+Confirmed
+Explicitly stated in the supplied implementation brief or confirmed decisions.
+Prototype context
+Shown in supplied screens/video; informs presentation, but does not prove the behaviour is implemented or validated.
+TBD / decision
+Not specified. Must be resolved by the named product owner before the affected build/release gate.
+
+
+
+
+
+
+2. Users, access and scope
+
+Role
+Primary job in 3DU
+Access boundary
+Student, Classes 9–12
+Create and resume work; progress through the pipeline; view own progress and, once published, the shared approved report.
+Own record; no map editing, regeneration, approval or publication.
+Linked parent
+View the same approved maps and same Track Progress content as the linked student; access support.
+No raw assessment answers, private notes, editing or approval rights.
+Involved mentor
+See only relevant records for students they actually work with; record relevant session work and completion approvals; review the exact initial report version.
+Mentor approval does not grant editing rights.
+Admin
+Inspect inputs and all workflow steps; correct evidence; edit maps; request information; save drafts; rerun affected downstream steps.
+Approve/publish as specified; inspect version and approval history.
+
+In scope
+Public homepage; signup, login, logout and account recovery; four role portals; real authentication and persistent storage; server-enforced role and record access; stage sequencing and progress; the four mapping steps; admin review; initial and subsequent approval flows; controlled student/parent publication; mentor-relevant interactions; responsive and keyboard-accessible navigation; and setup, schema and verification documentation.
+Explicitly out of scope
+Numerical career-fit calculations, alignment scoring, cluster ranking and automated mentor matching. No external Mindpal embedding, hardcoded Mindpal run URL, redirect or required Mindpal connection. These exclusions are explicit in the implementation brief.
+Not yet committed
+Specific validated assessments, scoring rules, activity-completion rules, recommendation algorithms, pricing or business model, content inventory, rollout population, target launch date, success targets, deployment stack, third-party providers and service-level targets. These are open decisions, not implied exclusions.
+Platform stages and analytical maps are different
+The student portal has nine ordered navigation stages. The analytical journey-map workflow has eighteen stages. The eighteen-stage map is an internal analysis artifact. The analytical map describes experience; it does not unlock, reorder or replace portal stages.
+
+
+3. Core workflows and functional requirements
+Student pipeline
+Order
+Stage
+Access rule
+1
+Create Profile
+Available at start
+2
+Take Assessments
+Unlock after stage 1 is complete.
+3
+Discover Interests & Strengths
+Unlock after stage 2 is complete.
+4
+Explore Career Paths
+Unlock after stage 3 is complete.
+5
+Find Relevant Mentors
+Unlock after stage 4 is complete.
+6
+Attend Sessions
+Unlock after stage 5 is complete.
+7
+Complete Activities
+Unlock after stage 6 is complete.
+8
+Get to know yourself
+Unlock after stage 7 is complete; report remains hidden until published.
+9
+Track Progress
+Available at all times
+
+Completion logic that needs a product decision
+Assessment content, scoring rules and activity completion criteria have not been supplied. Keep their interfaces configurable. Do not present invented instruments, validated scores or completion criteria as real. Clearly mark development fixtures as synthetic. The implementation brief also says admin may approve stage completion at any time and an involved mentor may approve relevant work; the exact relationship between those approvals and stage-specific completion criteria must be stated before implementation.
+Functional requirements – Required Stage Behaviour
+ID
+Requirement
+Acceptance check
+FR-01
+Provide working signup, login, logout, recovery and role-correct portal routing.
+A test account can complete each supported auth flow; role routing does not expose another portal.
+FR-02
+Use real persistent accounts/data; do not use localStorage as identity or shared database.
+Saved work survives refresh, logout and later login from another authorized device.
+FR-03
+Show all nine stages with status; stages 1–8 unlock sequentially; stage 9 is always accessible.
+Completing one stage opens only the next; Track Progress works from stage 1.
+FR-04
+Separate page open, save, submit and completion; Next cannot auto-complete.
+Each action has distinct state; a stage completes only with its defined evidence/approval.
+FR-05
+Enforce stage and role restrictions on direct URLs and backend actions.
+Unauthorized direct URL/API access is rejected server-side.
+FR-06
+Save drafts and allow students to resume; completed stages remain reviewable.
+Reload restores saved state; review does not silently reopen or alter downstream state.
+FR-07
+Show the locked-stage message and link back to next available stage.
+Locked-stage page states “This stage will open once you complete the previous stage.” and provides a valid next action.
+FR-08
+Keep assessments, scoring and activity criteria configurable until supplied.
+No invented validated test, score or completion rule is presented as real; fixtures are labeled synthetic.
+FR-09
+Permit admin completion approval at any time; mentor approval only for work and students involving that mentor.
+Role/assignment checks are enforced by server, including for API requests.
+
+
+
+4. Mapping workflow and output requirements
+Inputs
+Use student and parent responses; educator and mentor notes; academic information; activities and interests; student and parent career preferences; strengths, work values and work style; lifestyle preferences; financial and geographical constraints; and previous interaction notes. Missing inputs are allowed and must be identified. Student evidence and parent evidence remain separate. Each workflow run uses a saved, versioned input snapshot.
+Four workflow/mapping steps
+Step
+Required behavior and inspectable output
+Admin-visible output
+1 Evidence Classifier
+Preserve original statement; capture stakeholder, source, evidence type, career dimension, sentiment, confidence and contradiction status. Distinguish facts, preferences, behavior, quotations, constraints, expectations, assumptions, contradictions and missing evidence. Never treat an assumption as fact.
+Produce structured JSON and an admin-readable register. Never treat an assumption as fact.
+2 Persona Identifier
+Use the exact student/parent options in the supplied detailed mapping specification. Preserve alternatives, supporting evidence, needs, barriers, confidence, missing evidence and assumptions to validate. Avoid demographic stereotypes; if evidence is insufficient, report the limitation instead of forcing a label.
+Selected hypothesis plus alternatives, evidence and limitations.
+3 Empathy and Need Mapper
+Create separate student and parent maps using the supplied categories. Keep evidence, source, confidence and validation/assumption status internally. Preserve the distinctions among warmth, engagement, discovery quality, convenience, parent transparency and student privacy.
+Separate maps with traceable inputs, gaps and review state.
+4 User-Journey Mapper
+Create separate student and parent analytical maps using the supplied eighteen stages and fields. Include specified moments of truth, risks, conflicts, human intervention and automation opportunities. Do not substitute the nine portal stages.
+Two eighteen-stage journey maps; not portal navigation.
+
+Workflow integrity and admin visibility
+For each step, admin can inspect input received, evidence extracted, transformation performed, output produced, confidence and gaps, and output passed downstream. 
+Validate structured outputs. Invalid output, provider failure or retry must be visible; partial results must not publish. If an AI provider is needed, its provider and credentials must be configured securely; do not fabricate generated reports if unavailable.
+An upstream edit marks dependent outputs as needing review. Rerun affected downstream steps before presenting them as current.
+Mapping generation follows required assessments, mentor interview and activities. The readiness criteria are TBD; configure them explicitly before build.
+
+5. Review, publication and permission rules
+Initial report publication
+Required tests, mentor interview and activities completed → versioned four-step mapping run → admin review and approval → approval by the involved mentor of that exact version → publication to the student and linked parent. If the required mentor approval cannot occur, the initial report stays pending; no automatic bypass is defined.
+Subsequent revisions
+Only admin may revise maps. A subsequent draft requires admin approval before publication; fresh mentor approval is not required. Saving or generating a draft must never overwrite a published version. Every edit, review, approval and publication must identify the specific version and record actor, timestamp and relevant reason.
+Role and report visibility matrix
+Capability
+Student
+Linked parent
+Involved mentor
+Admin
+Own/linked progress
+Own
+Same approved progress view
+Only relevant work
+All assigned records
+Raw student/parent inputs
+Own submitted information per portal design TBD
+No raw assessment answers
+Only necessary for actual involvement
+Yes
+Intermediate evidence register, prompts, confidence, private notes
+No
+No
+Only if specifically needed; exact field scope TBD
+Yes
+View published six maps
+Yes
+Yes, same version
+Review only for initial approval if involved
+Yes
+Edit/regenerate maps
+No
+No
+No
+Yes
+Approve initial publication
+No
+No
+Yes, if involved; exact version
+Yes
+Approve later revision
+No
+No
+No fresh approval required
+Yes
+Published “Get to know yourself” report
+Publish exactly six reviewed outputs: student persona, parent persona, student empathy and need map, parent empathy and need map, student journey map and parent journey map. Student and linked parent receive the same approved set, view-only. Use plain-language headings and respectful explanations. Before publication, show: “Your mentor and the 3DU team are reviewing your insights. Your results will appear here once approved.” Page unlock and report publication are separate states.
+
+Information that must stay private
+Never expose prompts, classifier rules, internal reasoning, evidence registers, confidence calculations, assumptions under review or private admin/mentor notes through the student/parent UI or API. Human reviewers must check that the shared wording is suitable for both student and parent.
+Admin Approval
+PRD treats “admin may review at any time” as unrestricted review access, while retaining both approvals as the initial publication gate. Confirm whether “admin can approve at any time” also means admin may complete stage work independently; encode that separately from report publication.
+
+
+6. Portals, data, security and quality requirements
+Portal requirements
+Area
+Requirement
+Public homepage
+Explain 3DU, audiences and how it works. Keep detailed personal journeys in authenticated portals. Do not add fabricated testimonials, invented mentor affiliations, unsubstantiated user counts or unsupported outcomes.
+Student
+Show nine-stage pipeline, saved work, completion state, approved report when published, progress and clear next action. Persistent “Contact for support” on each authenticated page.
+Parent
+Show only the authorized linked student’s approved report, same Track Progress content and support contact. Do not mirror full student portal, raw assessment answers or private notes.
+Mentor
+Limit records to actual involvement. Support relevant session records, completion approval and initial report review. Approval access does not authorize edits.
+Admin
+Dedicated workspace for full workflow, source snapshot, intermediate outputs, edits/reasons, information requests, drafts, downstream reruns, review, approvals and version history.
+
+Data and access controls
+Maintain distinct accounts, student-parent authorized associations, and mentor-student involvement associations. Admin and mentor roles require authorized provisioning. Enforce role and record access server-side. Keep secrets and mapping prompts out of browser code. Preserve data across refresh, logout and authorized devices. Treat the versioned input snapshot, generated draft, admin-edited draft, approval record and published report as distinct records/states.
+Quality requirements
+Quality attribute
+Confirmed requirement
+Target / decision
+Accessibility
+Responsive desktop/mobile navigation; keyboard-accessible controls; reduced-motion support; readable simple language.
+Conformance standard and audit threshold TBD.
+Privacy / safety
+Hide unpublished/internal outputs from student and parent; separate student and parent evidence; prevent unauthorized reads and writes.
+Retention, deletion, consent/guardian, incident and privacy policy TBD.
+Reliability
+Workflow errors and retries visible; failed runs must not damage published reports.
+Availability, backup, recovery and response-time targets TBD.
+Compatibility
+Responsive layouts; authenticated use across authorized devices.
+Browser/device support matrix TBD.
+Security
+Secure authentication, server permissions, protected secrets, authorized role provisioning.
+Stack, session policy, encryption, testing standard and security owner TBD.
+
+Support contact: email action must use mailto:prashasawan@gmail.com. Phone is a clearly labelled non-callable placeholder until a real number is supplied; do not imply phone support is operational.
+
+
+7. User stories and release acceptance
+ID
+User story / behavior
+Release acceptance
+US-01
+As a student, I want to save and resume my work so I do not lose progress.
+Saved information is restored after refresh and subsequent authorized login.
+US-02
+As a student, I want to know what is available and what is locked.
+Nine stages show correct state; blocked route explains the previous-stage requirement and next action.
+US-03
+As a parent, I want a clear view of shared progress and approved insights.
+Parent linked to student sees the same progress/map version; a different student and raw answers are inaccessible.
+US-04
+As a mentor, I want to review the initial report for a student I actually support.
+Only assigned/involved mentor can approve the exact initial version; mentor cannot edit maps.
+US-05
+As an admin, I want to understand how each map was produced.
+Each of four steps exposes inputs, transformations, outputs, gaps/confidence, and downstream output.
+US-06
+As an admin, I want an upstream correction to invalidate dependent outputs.
+Changed source marks affected downstream steps as needing review; stale maps cannot appear current or publish.
+US-07
+As a student or parent, I want to see why results are not available yet.
+Before publication, only the specified pending-review message is shown; no draft or partial outputs leak.
+US-08
+As an admin, I want to revise a report without losing the published version.
+Draft/revised version remains separate; later publication requires admin approval; published prior version remains intact.
+US-09
+As a user, I want to contact support easily.
+Persistent support entry appears on authenticated student/parent pages; email opens the specified address; placeholder phone is not callable.
+
+End-to-end release checklist
+Signup, login, logout, recovery and correct role routing pass.
+Sequential locks, direct-URL/backend enforcement, completion semantics and always-open Track Progress pass.
+Refresh and cross-device persistence pass for authorized users.
+Parent is limited to the linked student; mentor is limited to actual involvement; admin access is auditable.
+Admin edits invalidate affected downstream outputs; failed mapping runs do not alter published versions.
+Initial report requires admin plus involved-mentor approval of the same version; later revisions require admin approval only.
+Student/parent see identical approved maps and progress; unpublished information and internal logic stay hidden.
+Responsive and keyboard navigation, reduced-motion behavior, support email and phone placeholder are checked.
+A feature is not complete until its behavior is implemented and verified. Delivery also includes working code, database schema, setup/configuration instructions and a concise verification report; blockers are named.
+
+
+8. Measurement, dependencies and risks
+Success measurement
+No baseline, numeric target, event taxonomy, measurement window or owner is supplied. Do not invent a North Star target. Instrument the following definitions only after the team approves data collection, privacy and targets:
+Outcome area
+Metric definition to agree
+Baseline / target
+Pipeline progression
+Count and rate of students completing each stage, by eligible starting cohort; include stage and time window.
+TBD
+Progress clarity
+Share of users who can identify their next available action in a usability check.
+Method and threshold TBD
+Mapping quality
+Reviewer correction rate by mapping step; missing-evidence and contradiction handling; version-specific review outcomes.
+Rubric, baseline and threshold TBD
+Publication integrity
+Initial reports published only after required approvals; failed/partial runs published; stale downstream outputs presented as current.
+Target and monitoring TBD
+Access control
+Unauthorized read/write attempts blocked by role and record boundary tests.
+Test coverage and pass threshold TBD
+Experience health
+Authentication failures, save/resume failures, workflow failures, page response and availability.
+Service targets TBD
+Dependencies and blockers
+Validated assessments, scoring rules and activity-completion criteria before implementing live assessment and completion logic.
+Exact readiness criteria for mapping generation, including required tests, mentor interview and activities.
+Complete mapping specification: persona options, empathy categories, eighteen journey stages and fields. The current implementation brief references the attachment but does not reproduce all of its detailed enumerations.
+Backend stack, hosting, authentication and database choice; secure provider/credential configuration if AI generation is used.
+Authorized student-parent linking and mentor assignment/provisioning process.
+Phone support number if phone contact is expected; consent, retention, deletion, incident and privacy policy; accessibility and compatibility standards.
+Success baselines, targets, analytics approval, launch owner, schedule, rollout cohort and operational support ownership.
+Principal risks and controls
+Risk
+Control required by this PRD
+Unvalidated or invented career assessment outputs
+No live instrument or score until validated source and scoring rules are supplied; synthetic fixtures clearly labelled.
+Student/parent conflict or inappropriate shared wording
+Separate evidence/maps; human review of shared report; student and parent receive only approved shared version.
+Data leakage through role pages or APIs
+Server-side record/role controls and explicit negative tests for raw, unpublished and unrelated records.
+Stale maps after edits
+Versioned input snapshot; mark affected outputs for review; rerun dependent workflow steps; block stale publication.
+Demo screens mistaken for product truth
+Prototype content treated as illustrative. No claims of working auth, persistence, real mentors, outcomes or validated scores unless verified.
+
+
+
+9. Open decisions and references
+Open decisions required before build or launch
+These are not product assumptions. The team must answer or assign an owner before the affected feature is considered ready.
+Decision to resolve
+Why it blocks or shapes the build
+Status
+Name product owner, technical owner and final approver.
+Assigns acceptance and change decisions.
+TBD
+Choose backend/auth/database/hosting and AI provider, if any.
+Defines architecture, credential setup, cost and operations.
+TBD
+Approve real assessments, scoring and stage-completion criteria.
+Prevents fabricated tests and false completion.
+TBD
+Provide detailed mapper specification enumerations.
+Required for exact persona, empathy and 18-stage journey outputs.
+Referenced; verify attachment
+Define mapping readiness and approval handling when no mentor can approve.
+Controls generation and initial publication.
+Criteria TBD; no bypass stated
+Approve minor consent, guardian verification, retention, deletion, export and incident policy.
+Required before personal-data collection and retention.
+TBD
+Set browser/device and accessibility conformance expectations.
+Makes quality testable.
+TBD
+Approve cohort, date, support owner, analytics, baseline and targets.
+Defines operational readiness and measurement.
+TBD
+Provide phone number or confirm email-only support.
+Prevents implying an operational phone channel.
+TBD
+
+
+
+
+
+PRD owners:
+Pallipalem Huns Pavitra
+Diksha Omar
+Nikunj Katariya

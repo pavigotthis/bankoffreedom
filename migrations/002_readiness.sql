@@ -1,0 +1,2 @@
+-- Source-backed human readiness confirmations, bound to the exact input/spec versions.
+CREATE TABLE readiness_reviews(snapshot_id INTEGER NOT NULL REFERENCES snapshots(id), kind TEXT NOT NULL CHECK(kind IN ('assessments','mentor_interview','activities')), config_version INTEGER NOT NULL, actor_id INTEGER NOT NULL REFERENCES users(id), evidence_ids TEXT NOT NULL, reason TEXT NOT NULL, created TEXT NOT NULL, PRIMARY KEY(snapshot_id,kind,config_version));
