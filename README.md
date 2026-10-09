@@ -4,6 +4,8 @@ A locally working, **synthetic-development-only** career discovery platform for 
 
 For a beginner walkthrough, see [step-by-step operation](docs/operate.md).
 
+For an app address accessible from other computers/phones, see [browser-based hosting setup](docs/hosting.md). The hosted HTTPS entry point is `wsgi:application`; hosting account access is still required.
+
 ## Run locally
 
 Requires Python 3.12+ and SQLite (included in Python). No paid services or external credentials are required for local development.
