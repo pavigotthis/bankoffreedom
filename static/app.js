@@ -7,6 +7,14 @@ async function send(form, endpoint, payload) {
   try {
     const response = await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': form.elements.csrf.value}, body: JSON.stringify(payload)});
     const result = await response.json();
+    if (response.status === 401 && window.location.pathname.startsWith('/admin/')) {
+      status.textContent = 'Your session expired. Your unsaved text is still here. ';
+      const link = document.createElement('a');
+      link.href = '/admin/login?expired=1';
+      link.textContent = 'Sign in again';
+      status.appendChild(link);
+      return;
+    }
     if (!response.ok) throw new Error(result.error || 'The request could not be completed.');
     if (result.status === 'invalid' || result.status === 'failed' || result.status === 'blocked') {
       status.textContent = `${result.status}: ${result.error || (result.gaps || []).join(', ')}. Inspect the recorded attempt after refreshing.`;
@@ -40,5 +48,14 @@ for (const form of document.querySelectorAll('.stage-form')) {
     const draft = {reflection: form.elements.reflection.value};
     for (const field of form.querySelectorAll('[data-draft-field]')) draft[field.dataset.draftField] = field.value;
     send(form, `/api/students/${form.dataset.student}/stages/${form.dataset.stage}`, {action: event.submitter?.value || 'save', revision: Number(form.dataset.revision), draft});
+  });
+}
+for (const button of document.querySelectorAll('[data-password-toggle]')) {
+  button.addEventListener('click', () => {
+    const input = document.getElementById(button.dataset.passwordToggle);
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    button.textContent = show ? 'Hide password' : 'Show password';
+    button.setAttribute('aria-pressed', String(show));
   });
 }

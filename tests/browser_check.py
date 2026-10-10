@@ -137,8 +137,17 @@ def main():
                 page.get_by_role("button", name="Sign out").click()
 
                 def sign_in(email):
-                    page.goto(url + "/login")
+                    page.goto(url + ("/admin/login" if email.startswith("admin@") else "/login"))
                     page.get_by_label("Email address").fill(email)
+                    if email.startswith("admin@"):
+                        page.get_by_role("button", name="Show password", exact=True).click()
+                        expect(page.get_by_label("Password", exact=True)).to_have_attribute(
+                            "type", "text"
+                        )
+                        page.get_by_role("button", name="Hide password", exact=True).click()
+                        expect(page.get_by_label("Password", exact=True)).to_have_attribute(
+                            "type", "password"
+                        )
                     page.get_by_label("Password", exact=True).fill(PASSWORD)
                     page.get_by_role("button", name="Sign in", exact=True).click()
 
@@ -204,7 +213,7 @@ def main():
                 assert not errors, errors
                 browser.close()
                 print(
-                    "PASS: desktop/mobile homepage and four portals; keyboard focus; reduced motion; signup/login/logout; draft save/submit/resume; locked Next; parent/mentor restriction states; admin evidence/snapshot/blocked run; support; no horizontal overflow or JavaScript errors."
+                    "PASS: desktop/mobile homepage and four portals; keyboard focus; reduced motion; signup/login/logout; draft save/submit/resume; locked Next; parent/mentor restriction states; dedicated admin login/password toggle/dashboard; admin evidence/snapshot/blocked run; support; no horizontal overflow or JavaScript errors."
                 )
         finally:
             server.terminate()

@@ -334,9 +334,24 @@ def create_app(test_config=None):
         g.session = s
         if s["user_id"]:
             g.user = one("SELECT id,email,role,synthetic FROM users WHERE id=?", (s["user_id"],))
+        # Guard the whole admin namespace before record lookup or CSRF handling.
+        if (
+            request.path == "/portal/admin"
+            or request.path.startswith("/api/admin/")
+            or (request.path.startswith("/admin/") and request.path != "/admin/login")
+        ):
+            if not g.user:
+                if request.path.startswith("/api/") or request.is_json:
+                    error("Please sign in as an administrator.", 401)
+                return redirect(
+                    "/admin/login"
+                    + ("?expired=1" if request.cookies.get("three_du_session") else "")
+                )
+            need_role("admin")
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             if not app.config["SYNTHETIC_ONLY"] and request.path not in (
                 "/login",
+                "/admin/login",
                 "/logout",
                 "/recover",
                 "/reset",
@@ -478,10 +493,20 @@ def create_app(test_config=None):
         audit("signup", uid if d["role"] == "student" else None)
         return response({"role": d["role"], "redirect": "/portal"})
 
+    @app.route("/admin/login", methods=["GET", "POST"])
     @app.route("/login", methods=["GET", "POST"])
     def login():
+        admin_login = request.path == "/admin/login"
         if request.method == "GET":
-            return render_template("auth.html", mode="login")
+            if admin_login and g.user:
+                need_role("admin")
+                return redirect("/admin/dashboard")
+            return render_template(
+                "auth.html",
+                mode="login",
+                admin_login=admin_login,
+                expired=request.args.get("expired") == "1",
+            )
         d = data()
         if not isinstance(d.get("email", ""), str) or not isinstance(d.get("password", ""), str):
             error("Email and password must be text.")
@@ -492,8 +517,15 @@ def create_app(test_config=None):
         hashed = u["password"] if u else generate_password_hash("unused-development-password")
         if not check_password_hash(hashed, d.get("password", "")) or not u:
             error("Email or password is incorrect.", 401)
+        if admin_login and u["role"] != "admin":
+            error("This account does not have administrator access.", 403)
         rotate(u["id"])
-        return response({"role": u["role"], "redirect": "/portal"})
+        destination = "/admin/dashboard" if u["role"] == "admin" else "/portal"
+        return (
+            jsonify(role=u["role"], redirect=destination)
+            if request.is_json
+            else redirect(destination)
+        )
 
     @app.post("/logout")
     def logout():
@@ -573,6 +605,8 @@ def create_app(test_config=None):
         role = g.user["role"]
         if role == "student":
             return redirect(url_for("student_stage", n=next_stage(g.user["id"])))
+        if role == "admin":
+            return redirect("/admin/dashboard")
         linked = rows(
             "SELECT u.id,u.email FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind=?",
             (g.user["id"], role),
@@ -700,6 +734,32 @@ def create_app(test_config=None):
             audit("stage-completion-approval", sid, n, why)
         return response({"status": "complete"}, sid)
 
+    def student_relationships(sid):
+        return rows(
+            "SELECT u.email,r.kind,r.scopes FROM relationships r JOIN users u ON u.id=r.actor_id WHERE r.student_id=? AND r.kind IN ('parent','mentor') ORDER BY r.kind,u.email",
+            (sid,),
+        )
+
+    @app.get("/admin/dashboard")
+    def admin_dashboard():
+        need_role("admin")
+        students = rows(
+            "SELECT u.id,u.email FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind='admin' ORDER BY u.email",
+            (g.user["id"],),
+        )
+        for student in students:
+            sid = student["id"]
+            student["progress"] = progress(sid)
+            student["relationships"] = student_relationships(sid)
+        audit("admin-dashboard-inspection")
+        return render_template("admin_dashboard.html", students=students)
+
+    @app.get("/api/admin/students/<int:sid>/relationships")
+    def admin_relationships(sid):
+        access(sid, "admin")
+        audit("admin-relationship-inspection", sid)
+        return jsonify(relationships=student_relationships(sid))
+
     @app.get("/admin/students/<int:sid>")
     def workspace(sid):
         access(sid, "admin")
@@ -718,6 +778,7 @@ def create_app(test_config=None):
         return render_template(
             "admin.html",
             sid=sid,
+            relationships=student_relationships(sid),
             progress=progress(sid),
             work=rows("SELECT * FROM stages WHERE student_id=?", (sid,)),
             evidence=rows("SELECT * FROM evidence WHERE student_id=? ORDER BY id", (sid,)),

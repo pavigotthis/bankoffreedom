@@ -23,6 +23,8 @@ The server is local only; no deployment is configured. Create a fictional studen
 
 `.env.example` lists configuration names without secrets. Flask does not automatically load that file: export the desired variables before starting. `DATABASE_PATH` and `RECOVERY_DIR` can be absolute paths. `SYNTHETIC_ONLY=0` **blocks** registration, provisioning and application data writes; it does not enable a production mode. HTTPS deployments would require `COOKIE_SECURE=1` and a separate production readiness review.
 
+See [admin login and first-account setup](docs/admin-access.md) for exact PythonAnywhere update, provisioning, assignment and login steps.
+
 ## Authorized provisioning and relationships
 
 The following commands are restricted to trusted operators with filesystem/database access. They are not public signup APIs. Use synthetic accounts only. A reason is recorded. Passwords are prompted, never included in documentation or saved configuration.
