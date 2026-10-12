@@ -13,6 +13,7 @@ from playwright.sync_api import expect, sync_playwright
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--configuration", required=True)
+parser.add_argument("--skip-import", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
@@ -68,14 +69,15 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
         "--reason",
         "SYNTHETIC trusted setup",
     )
-    cli(
-        "import-3du-mapping",
-        args.configuration,
-        "--actor-email",
-        "admin@synthetic.test",
-        "--reason",
-        "Supplied configuration with SYNTHETIC records",
-    )
+    if not args.skip_import:
+        cli(
+            "import-3du-mapping",
+            args.configuration,
+            "--actor-email",
+            "admin@synthetic.test",
+            "--reason",
+            "Supplied configuration with SYNTHETIC records",
+        )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -126,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                 expect(page.get_by_label("Your name", exact=True)).to_have_value(
                     "SYNTHETIC Browser Student"
                 )
-                page.goto(url + "/students/2/intake")
+                page.goto(url + "/student/stages/1")
                 expect(page.get_by_label("Student Responses", exact=False)).to_be_visible()
                 page.get_by_role("button", name="Submit for review", exact=True).click()
                 expect(page.locator(".form-status")).to_contain_text("Complete required fields")

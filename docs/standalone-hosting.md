@@ -48,3 +48,9 @@ Codex has prepared and tested this update, but cannot operate the user's logged-
 Migration 005 adds a persistent optional stored name for existing accounts and requires a name for all new student/parent signups. Existing names remain unknown until the owner supplies one; no email-derived name is fabricated. Existing students/parents use the account navigation's Add your name / Your name link (`/account/name`). Name changes are self-service, CSRF-protected, audited and cannot change roles, relationships or another account. Assigned admin dashboards and submitted-input author labels show names alongside emails.
 
 To install this incremental update, pull the new code, run `backup-db`, run `init-db`, then reload the existing PythonAnywhere app. No mapping reimport or account reprovisioning is necessary.
+
+## Create Profile navigation fix
+
+Create Profile now displays the confirmed structured student input fields inline. The old Enter and resume link and generic development-notes editor are removed from Stage 1. The standalone intake URL still works, and confirmed student/parent draft forms are usable without importing private AI configuration. Missing completion/readiness rules remain separate blockers; they do not hide these input fields.
+
+Migration 006 preserves earlier generic profile notes without treating them as structured answers. Existing notes stay reviewable privately after new draft saves. The same entry, submission limit, conflict checks, authorized admin visibility and parent/student separation remain enforced. Pull code, back up the database, apply `init-db`, then reload the web app; this fix does not require JSON reupload.

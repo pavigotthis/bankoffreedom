@@ -299,7 +299,7 @@ def test_template_compilation_and_repeatable_migrations(app):
     result = app.test_cli_runner().invoke(args=["init-db"])
     assert result.exit_code == 0
     conn = sqlite3.connect(app.config["DATABASE"])
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 6
     assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 8
     conn.close()
 

@@ -698,8 +698,10 @@ def create_app(test_config=None):
             return render_template("locked.html", progress=p, message=LOCKED), 403
         if n == 9:
             return render_template("shared.html", progress=p, report=public_report(sid), sid=sid)
+        intake_context = intake_view(sid) if n == 1 else {}
         return render_template(
             "stage.html",
+            **intake_context,
             n=n,
             stage=stage(sid, n),
             progress=p,
@@ -737,7 +739,13 @@ def create_app(test_config=None):
             return jsonify(
                 stage=n, status=s["status"], revision=s["revision"], draft=json.loads(s["draft"])
             )
-        if n == 1 and cfg()[1].get("mapping_profile"):
+        if n == 1 and (
+            cfg()[1].get("mapping_profile")
+            or one(
+                "SELECT id FROM intake_entries WHERE student_id=? AND actor_id=?",
+                (sid, g.user["id"]),
+            )
+        ):
             error(
                 "Use the profile input form; this endpoint cannot bypass its resubmission limit.",
                 409,
@@ -1839,19 +1847,29 @@ def create_app(test_config=None):
             error(LOCKED, 403)
         _, c = cfg()
         spec = private_mapping_spec(c)
-        if not spec:
-            error("Intake is waiting for the supplied mapping configuration to be imported.", 409)
         from .mindpal import PARENT_FIELDS, STUDENT_FIELDS
 
         allowed = STUDENT_FIELDS if g.user["role"] == "student" else PARENT_FIELDS
-        fields = [f for f in spec["fields"] if f["label"] in allowed]
+        # Confirmed form fields work independently of private AI configuration.
+        fields = (
+            [f for f in spec["fields"] if f["label"] in allowed]
+            if spec
+            else [
+                {
+                    "id": label.lower().replace(" ", "_"),
+                    "label": label,
+                    "type": "TEXT",
+                    "required": True,
+                }
+                for label in allowed
+            ]
+        )
         entry = one(
             "SELECT * FROM intake_entries WHERE student_id=? AND actor_id=?", (sid, g.user["id"])
         )
         return entry, fields, allowed
 
-    @app.get("/students/<int:sid>/intake")
-    def intake_page(sid):
+    def intake_view(sid):
         entry, fields, _ = own_intake(sid)
         entry = entry or {
             "id": None,
@@ -1860,15 +1878,23 @@ def create_app(test_config=None):
             "submissions": 0,
             "submitted": None,
         }
-        return render_template(
-            "intake.html",
-            sid=sid,
-            entry=entry,
-            fields=fields,
-            request_key=secrets.token_urlsafe(24),
-            read_only=entry["submissions"] >= 2
+        return {
+            "sid": sid,
+            "entry": entry,
+            "fields": fields,
+            "request_key": secrets.token_urlsafe(24),
+            "legacy_profile_note": (
+                one("SELECT note FROM profile_legacy_notes WHERE student_id=?", (sid,)) or {}
+            ).get("note", "")
+            if g.user["role"] == "student"
+            else "",
+            "read_only": entry["submissions"] >= 2
             or (g.user["role"] == "student" and stage(sid, 1)["status"] == "complete"),
-        )
+        }
+
+    @app.get("/students/<int:sid>/intake")
+    def intake_page(sid):
+        return render_template("intake.html", **intake_view(sid))
 
     @app.route("/api/students/<int:sid>/intake", methods=["GET", "POST"])
     @transaction
@@ -1962,6 +1988,11 @@ def create_app(test_config=None):
             ),
         )
         if g.user["role"] == "student" and (submitted or entry["submissions"] == 0):
+            legacy = json.loads(stage(sid, 1)["draft"]).get("reflection", "")
+            if isinstance(legacy, str) and legacy:
+                db().execute(
+                    "INSERT OR IGNORE INTO profile_legacy_notes VALUES(?,?,?)", (sid, legacy, now())
+                )
             # Stage 1 reviews the actual submitted form. Later unsent revision drafts stay private.
             db().execute(
                 "UPDATE stages SET draft=?,status=?,revision=revision+1 WHERE student_id=? AND stage=1",
