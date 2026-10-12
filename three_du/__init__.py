@@ -370,7 +370,9 @@ def create_app(test_config=None):
             g.new_session = t
         g.session = s
         if s["user_id"]:
-            g.user = one("SELECT id,email,role,synthetic FROM users WHERE id=?", (s["user_id"],))
+            g.user = one(
+                "SELECT id,email,name,role,synthetic FROM users WHERE id=?", (s["user_id"],)
+            )
         # Guard the whole admin namespace before record lookup or CSRF handling.
         if (
             request.path == "/portal/admin"
@@ -497,6 +499,33 @@ def create_app(test_config=None):
     def session_info():
         return jsonify(csrf=g.session["csrf"], user=g.user)
 
+    def account_name(value):
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 120:
+            error("Enter your name (1–120 characters).")
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            error("Enter your name without control characters.")
+        return value.strip()
+
+    @app.route("/account/name", methods=["GET", "POST"])
+    @transaction
+    def edit_account_name():
+        need_role("student", "parent")
+        if request.method == "GET":
+            return render_template("account_name.html")
+        name = account_name(data().get("name"))
+        db().execute("UPDATE users SET name=? WHERE id=?", (name, g.user["id"]))
+        audit(
+            "account-name-update",
+            g.user["id"] if g.user["role"] == "student" else None,
+            g.user["id"],
+            "Account owner updated display name; no relationship or role changed",
+        )
+        return (
+            jsonify(name=name)
+            if request.is_json
+            else redirect(url_for("edit_account_name", saved=1))
+        )
+
     @app.route("/signup", methods=["GET", "POST"])
     @transaction
     def signup():
@@ -511,12 +540,13 @@ def create_app(test_config=None):
             error("Only student and parent accounts can self-register.", 403)
         if d.get("synthetic") not in (True, "yes"):
             error("Use fictional development data only and confirm the notice.")
+        name = account_name(d.get("name"))
         try:
             uid = (
                 db()
                 .execute(
-                    "INSERT INTO users(email,password,role) VALUES(?,?,?)",
-                    (email, generate_password_hash(pw), d["role"]),
+                    "INSERT INTO users(email,password,role,name) VALUES(?,?,?,?)",
+                    (email, generate_password_hash(pw), d["role"], name),
                 )
                 .lastrowid
             )
@@ -645,7 +675,7 @@ def create_app(test_config=None):
         if role == "admin":
             return redirect("/admin/dashboard")
         linked = rows(
-            "SELECT u.id,u.email FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind=?",
+            "SELECT u.id,u.email,u.name FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind=?",
             (g.user["id"], role),
         )
         return render_template("portal.html", role=role, students=linked)
@@ -779,7 +809,7 @@ def create_app(test_config=None):
 
     def student_relationships(sid):
         return rows(
-            "SELECT u.email,r.kind,r.scopes FROM relationships r JOIN users u ON u.id=r.actor_id WHERE r.student_id=? AND r.kind IN ('parent','mentor') ORDER BY r.kind,u.email",
+            "SELECT u.email,u.name,r.kind,r.scopes FROM relationships r JOIN users u ON u.id=r.actor_id WHERE r.student_id=? AND r.kind IN ('parent','mentor') ORDER BY r.kind,u.email",
             (sid,),
         )
 
@@ -787,7 +817,7 @@ def create_app(test_config=None):
     def admin_dashboard():
         need_role("admin")
         students = rows(
-            "SELECT u.id,u.email FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind='admin' ORDER BY u.email",
+            "SELECT u.id,u.email,u.name FROM relationships r JOIN users u ON u.id=r.student_id WHERE r.actor_id=? AND r.kind='admin' ORDER BY u.email",
             (g.user["id"],),
         )
         for student in students:
@@ -837,7 +867,7 @@ def create_app(test_config=None):
             gaps=mapping_gaps(c) + readiness(sid, c),
             mapping_spec=private_mapping_spec(c),
             intakes=rows(
-                "SELECT e.id,e.actor_id,e.role,e.submitted,e.submitted_version,e.submissions,e.updated,u.email AS actor_email,(SELECT MIN(created) FROM intake_versions WHERE entry_id=e.id) AS first_submitted FROM intake_entries e JOIN users u ON u.id=e.actor_id WHERE e.student_id=? AND e.submitted IS NOT NULL",
+                "SELECT e.id,e.actor_id,e.role,e.submitted,e.submitted_version,e.submissions,e.updated,u.email AS actor_email,u.name AS actor_name,(SELECT MIN(created) FROM intake_versions WHERE entry_id=e.id) AS first_submitted FROM intake_entries e JOIN users u ON u.id=e.actor_id WHERE e.student_id=? AND e.submitted IS NOT NULL",
                 (sid,),
             ),
         )

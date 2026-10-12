@@ -95,6 +95,7 @@ def main():
                 page.locator("h1").click()
                 page.screenshot(path="/tmp/3du-home-desktop.png", full_page=True)
                 page.goto(url + "/signup")
+                page.get_by_label("Your name", exact=True).fill("SYNTHETIC Browser Student")
                 page.get_by_label("Email address").fill("student@synthetic.test")
                 page.get_by_label("Password (at least 12 characters)").fill(PASSWORD)
                 page.get_by_label("I will use fictional development data only.").check()

@@ -42,3 +42,9 @@ A generated journey-summary placeholder must be edited and reviewed before appro
 Live minor-data policies remain unresolved; the site remains a labelled synthetic demonstration. A publicly reachable site is not approval to collect live student data. Real email recovery remains unconfigured unless the operator has separately implemented delivery; the existing development recovery spool is not operational email.
 
 Codex has prepared and tested this update, but cannot operate the user's logged-in PythonAnywhere dashboard. Remote deployment/reload and post-deployment checks must be performed by the account owner. The external site request from this execution environment was blocked by its network proxy (403); no remote site behavior was verified.
+
+## Account-name update
+
+Migration 005 adds a persistent optional stored name for existing accounts and requires a name for all new student/parent signups. Existing names remain unknown until the owner supplies one; no email-derived name is fabricated. Existing students/parents use the account navigation's Add your name / Your name link (`/account/name`). Name changes are self-service, CSRF-protected, audited and cannot change roles, relationships or another account. Assigned admin dashboards and submitted-input author labels show names alongside emails.
+
+To install this incremental update, pull the new code, run `backup-db`, run `init-db`, then reload the existing PythonAnywhere app. No mapping reimport or account reprovisioning is necessary.

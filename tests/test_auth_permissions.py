@@ -13,7 +13,13 @@ def test_signup_cannot_grant_privilege(client, role):
     r = post(
         client,
         "/signup",
-        {"email": "new@example.test", "password": PASSWORD, "role": role, "synthetic": True},
+        {
+            "name": "Synthetic Student",
+            "email": "new@example.test",
+            "password": PASSWORD,
+            "role": role,
+            "synthetic": True,
+        },
     )
     assert r.status_code == 403
 
@@ -22,7 +28,13 @@ def test_signup_login_logout_persistence(app, client):
     r = post(
         client,
         "/signup",
-        {"email": "new@example.test", "password": PASSWORD, "role": "student", "synthetic": True},
+        {
+            "name": "Synthetic Student",
+            "email": "new@example.test",
+            "password": PASSWORD,
+            "role": "student",
+            "synthetic": True,
+        },
     )
     assert r.status_code == 200 and client.get("/portal").location.endswith("/student/stages/1")
     uid = client.get("/api/session").json["user"]["id"]
@@ -287,7 +299,7 @@ def test_template_compilation_and_repeatable_migrations(app):
     result = app.test_cli_runner().invoke(args=["init-db"])
     assert result.exit_code == 0
     conn = sqlite3.connect(app.config["DATABASE"])
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 5
     assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 8
     conn.close()
 

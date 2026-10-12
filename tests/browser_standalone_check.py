@@ -112,7 +112,20 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                     page.get_by_role("button", name="Sign in", exact=True).click()
                     page.wait_for_load_state("networkidle")
 
+                page.goto(url + "/signup")
+                expect(page.get_by_label("Your name", exact=True)).to_be_visible()
+                assert (
+                    page.get_by_label("Your name", exact=True).get_attribute("required") is not None
+                )
                 sign_in("student@synthetic.test")
+                page.goto(url + "/account/name")
+                page.get_by_label("Your name", exact=True).fill("SYNTHETIC Browser Student")
+                page.get_by_role("button", name="Save name", exact=True).click()
+                expect(page.get_by_role("status")).to_contain_text("Your name has been saved")
+                page.reload()
+                expect(page.get_by_label("Your name", exact=True)).to_have_value(
+                    "SYNTHETIC Browser Student"
+                )
                 page.goto(url + "/students/2/intake")
                 expect(page.get_by_label("Student Responses", exact=False)).to_be_visible()
                 page.get_by_role("button", name="Submit for review", exact=True).click()
