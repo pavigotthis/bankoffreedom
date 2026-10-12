@@ -40,3 +40,11 @@ Initial repository inspection: only the first-commit README existed; no applicat
 | Working code/schema/setup/config/verification | Source, two SQL migrations, secret-free variable template, pinned dependencies, CLI instructions, requirements checklist and verification report supplied. No deployment configured. |
 
 Assessments, live recommendation/content inventory, true mapper generation and production minor-data operation cannot pass release acceptance until the materials in `decisions.md` are supplied. This checklist does not claim those blocked features complete.
+
+## Supplied mapping configuration increment
+
+- FR-01/02/05 and US-01/03: `/students/<id>/intake` and its API persist own student/linked-parent entries with CSRF, server relationship checks, labelled source fields and one later resubmission. Admin sees submitted attributed fields; parent sees only their own input and shared progress/report.
+- FR-04/06: intake save, initial submit, sole resubmit, stage completion, report review and publication remain different actions. Changes create evidence lineage and invalidate unpublished mapping; they do not auto-complete work.
+- FR-08 and US-05/06: `import-mindpal` stores the exact export privately and loads supplied option lists/structured engineering adapters. Admin inspection covers instructions, source fingerprints, step inputs, full validated upstream context, attempts and failures. Snapshot/configuration/attempt changes reject stale generation.
+- US-04/07/08: six-map generated previews remain private and require unchanged exact-version approval/publication rules; initial admin plus involved mentor, subsequent admin-only. Raw/private trace fields are not copied into public responses. Malformed/missing definitions cannot publish; all eighteen stage names are now supplied.
+- Release checks: migration 003, 80 tests and isolated Chromium intake checks; no live provider or hosted deployment verification. The user reconfirmed mapping only. Source scoring/matching/ranking branches are excluded.

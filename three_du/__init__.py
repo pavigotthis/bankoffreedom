@@ -60,6 +60,7 @@ def create_app(test_config=None):
         SYNTHETIC_ONLY=os.getenv("SYNTHETIC_ONLY", "1") == "1",
         COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
         MAX_CONTENT_LENGTH=1024 * 1024,
+        MAPPING_PROVIDER=None,
         SESSION_SECONDS=8 * 3600,
         RECOVERY_DIR=os.getenv("RECOVERY_DIR", str(ROOT / "instance/recovery")),
     )
@@ -144,13 +145,13 @@ def create_app(test_config=None):
 
     def access(sid, *roles):
         need_role(*roles)
-        if not one("SELECT id FROM users WHERE id=? AND role='student'", (sid,)):
-            error("Student not found.", 404)
         role = g.user["role"]
         if role == "student" and g.user["id"] != sid:
             error("You do not have access to this student.", 403)
         if role != "student" and not relation(sid, role):
             error("No authorized relationship with this student.", 403)
+        if not one("SELECT id FROM users WHERE id=? AND role='student'", (sid,)):
+            error("Student not found.", 404)
 
     def stage(sid, n):
         return one("SELECT * FROM stages WHERE student_id=? AND stage=?", (sid, n))
@@ -637,6 +638,7 @@ def create_app(test_config=None):
             stage=stage(sid, n),
             progress=p,
             rule=cfg()[1]["stage_rules"].get(str(n)),
+            intake_enabled=bool(cfg()[1].get("mapping_profile")),
             report=public_report(sid) if n == 8 else None,
         )
 
@@ -668,6 +670,11 @@ def create_app(test_config=None):
         if request.method == "GET":
             return jsonify(
                 stage=n, status=s["status"], revision=s["revision"], draft=json.loads(s["draft"])
+            )
+        if n == 1 and cfg()[1].get("mapping_profile"):
+            error(
+                "Use the profile input form; this endpoint cannot bypass its resubmission limit.",
+                409,
             )
         return save_work(sid, n, s)
 
@@ -719,7 +726,7 @@ def create_app(test_config=None):
         ):
             error("Required evidence fields are outside your approved review scope.", 403)
         s = stage(sid, n)
-        if d.get("revision") != s["revision"]:
+        if str(d.get("revision")) != str(s["revision"]):
             error("Review the exact current work revision.", 409)
         if rule["requires_submission"] and s["status"] not in ("submitted", "complete"):
             error("Submission is required by the approved criteria.", 409)
@@ -792,6 +799,11 @@ def create_app(test_config=None):
             config=c,
             config_version=v,
             gaps=mapping_gaps(c) + readiness(sid, c),
+            mapping_spec=private_mapping_spec(c),
+            intakes=rows(
+                "SELECT e.id,e.actor_id,e.role,e.submitted,e.submitted_version,e.submissions,e.updated,u.email AS actor_email,(SELECT MIN(created) FROM intake_versions WHERE entry_id=e.id) AS first_submitted FROM intake_entries e JOIN users u ON u.id=e.actor_id WHERE e.student_id=? AND e.submitted IS NOT NULL",
+                (sid,),
+            ),
         )
 
     @app.get("/api/admin/students/<int:sid>")
@@ -817,7 +829,9 @@ def create_app(test_config=None):
         if not 1 <= n <= 4:
             error("Step not found.", 404)
         version, c = cfg()
-        return jsonify(config_version=version, schema=step_schema(n, c), blocked_by=mapping_gaps(c))
+        return jsonify(
+            config_version=version, schema=step_schema(n, c), blocked_by=mapping_gaps(c, n)
+        )
 
     @app.post("/api/admin/config")
     @transaction
@@ -961,13 +975,22 @@ def create_app(test_config=None):
         )
         if not snap:
             error("Save a versioned input snapshot first.", 409)
-        gaps = mapping_gaps(c) + readiness(sid, c)
+        gaps = (mapping_gaps(c, 1) if c.get("mapping_profile") else mapping_gaps(c)) + readiness(
+            sid, c
+        )
         status = "blocked" if gaps else "pending"
         rid = (
             db()
             .execute(
-                "INSERT INTO runs(student_id,snapshot_id,config_version,status,created) VALUES(?,?,?,?,?)",
-                (sid, snap["id"], v, status, now()),
+                "INSERT INTO runs(student_id,snapshot_id,config_version,status,created,specification_sha256) VALUES(?,?,?,?,?,?)",
+                (
+                    sid,
+                    snap["id"],
+                    v,
+                    status,
+                    now(),
+                    c.get("mapping_profile", {}).get("source_sha256"),
+                ),
             )
             .lastrowid
         )
@@ -993,6 +1016,7 @@ def create_app(test_config=None):
         audit("workflow-inspection", r["student_id"], rid)
         return jsonify(
             run=r,
+            specification=imported_spec_by_hash(r.get("specification_sha256")),
             snapshot=one("SELECT * FROM snapshots WHERE id=?", (r["snapshot_id"],)),
             steps=rows("SELECT * FROM steps WHERE run_id=? ORDER BY step,attempt", (rid,)),
             readiness_reviews=rows(
@@ -1007,7 +1031,7 @@ def create_app(test_config=None):
 
     @app.post("/api/admin/runs/<int:rid>/steps/<int:n>")
     @transaction
-    def record_step(rid, n):
+    def record_step(rid, n, provider_generation=False):
         r = run_record(rid)
         sid = r["student_id"]
         access(sid, "admin")
@@ -1026,7 +1050,7 @@ def create_app(test_config=None):
             not snapshot_current(r)
             or snap["id"] != latest["id"]
             or readiness(sid, c)
-            or mapping_gaps(c)
+            or mapping_gaps(c, n)
         ):
             error(
                 "This run cannot execute until its specification, snapshot and readiness are current.",
@@ -1036,21 +1060,39 @@ def create_app(test_config=None):
         if n > 1 and (not previous or previous["status"] != "valid"):
             error("Complete the previous mapping step first.", 409)
         old = latest_step(rid, n)
-        if d.get("expected_attempt", 0) != (old["attempt"] if old else 0):
+        if str(d.get("expected_attempt", 0)) != str(old["attempt"] if old else 0):
             error("Step changed. Inspect the latest attempt before retrying.", 409)
-        incoming = json.loads(snap["inputs"])
-        if previous:
-            incoming = json.loads(previous["output"])
+        snapshot_inputs = json.loads(snap["inputs"])
+        from .mindpal import intake_context
+
+        spec = private_mapping_spec(c)
+        incoming = {
+            "snapshot": snapshot_inputs,
+            "upstream": {str(k): json.loads(latest_step(rid, k)["output"]) for k in range(1, n)},
+            "intake_fields": intake_context(snapshot_inputs, spec) if spec else {},
+            "upstream_attempts": {str(k): latest_step(rid, k)["attempt"] for k in range(1, n)},
+        }
         attempt = (old["attempt"] if old else 0) + 1
         invalidate(sid, "Workflow step rerun: " + why, rid, n)
         status = "valid"
         failure = None
         out = d.get("output")
         summary = d.get("summary", "")
-        if not isinstance(summary, str) or not summary.strip() or len(summary) > 20000:
+        if not provider_generation and (
+            not isinstance(summary, str) or not summary.strip() or len(summary) > 20000
+        ):
             error("An inspectable transformation summary is required.")
+        unavailable = False
+        if provider_generation:
+            if packed(incoming) != g.generated_input:
+                error(
+                    "Inputs or upstream attempts changed during generation. Review and retry.", 409
+                )
+            out, summary, failure, unavailable = g.generated_result
+            if failure:
+                d["provider_error"] = failure
         if d.get("provider_error"):
-            status = "failed"
+            status = "blocked" if unavailable else "failed"
             failure = str(d["provider_error"])[:2000]
             out = None
         else:
@@ -1075,7 +1117,13 @@ def create_app(test_config=None):
             ),
         )
         complete = all((latest_step(rid, k) or {}).get("status") == "valid" for k in range(1, 5))
-        run_status = "complete" if complete else ("failed" if status != "valid" else "pending")
+        run_status = (
+            "complete"
+            if complete
+            else (
+                "blocked" if status == "blocked" else ("failed" if status != "valid" else "pending")
+            )
+        )
         db().execute("UPDATE runs SET status=? WHERE id=?", (run_status, rid))
         audit("step-" + status, sid, rid, why)
         return response(
@@ -1083,35 +1131,62 @@ def create_app(test_config=None):
         )
 
     @app.post("/api/admin/runs/<int:rid>/generate/<int:n>")
-    @transaction
     def generate(rid, n):
+        # Provider I/O occurs outside a write transaction. Revalidate everything atomically afterwards.
+        from .mindpal import intake_context
+        from .provider import ProviderFailure, ProviderUnavailable, configured_provider
+
         r = run_record(rid)
         access(r["student_id"], "admin")
-        d = data()
-        why = reason(d)
         if not 1 <= n <= 4:
             error("Step not found.", 404)
-        # No provider selected in the PRD. Do not fabricate a result.
-        from .provider import ProviderUnavailable, UnconfiguredProvider
-
-        try:
-            UnconfiguredProvider().generate(n, {}, {})
-        except ProviderUnavailable as e:
-            old = latest_step(rid, n)
-            attempt = (old["attempt"] if old else 0) + 1
-            if d.get("expected_attempt", 0) != (old["attempt"] if old else 0):
-                error("Inspect the latest step attempt before retrying.", 409)
-            snap = one("SELECT inputs FROM snapshots WHERE id=?", (r["snapshot_id"],))
-            previous = latest_step(rid, n - 1) if n > 1 else None
-            incoming = snap["inputs"] if n == 1 else ((previous or {}).get("output") or "{}")
-            invalidate(r["student_id"], "Provider execution unavailable", rid, n)
-            db().execute(
-                "INSERT INTO steps(run_id,step,attempt,status,input,summary,error,created) VALUES(?,?,?,'blocked',?,?,?,?)",
-                (rid, n, attempt, incoming, "No provider executed", str(e), now()),
+        d = data()
+        reason(d)
+        v, c = cfg()
+        snap = one("SELECT * FROM snapshots WHERE id=?", (r["snapshot_id"],))
+        if (
+            r["config_version"] != v
+            or not snapshot_current(r)
+            or readiness(r["student_id"], c)
+            or mapping_gaps(c, n)
+        ):
+            error(
+                "Current source-backed readiness and this step's specification are required.", 409
             )
-            db().execute("UPDATE runs SET status='blocked' WHERE id=?", (rid,))
-            audit("provider-unavailable", r["student_id"], rid, why)
-            return response({"status": "blocked", "error": str(e)}, r["student_id"])
+        old = latest_step(rid, n)
+        if str(d.get("expected_attempt", 0)) != str(old["attempt"] if old else 0):
+            error("Inspect the latest attempt before retrying.", 409)
+        upstream = {str(k): latest_step(rid, k) for k in range(1, n)}
+        if any(not value or value["status"] != "valid" for value in upstream.values()):
+            error("Complete the prior mapping steps first.", 409)
+        spec = private_mapping_spec(c)
+        snapshot_inputs = json.loads(snap["inputs"])
+        incoming = {
+            "snapshot": snapshot_inputs,
+            "upstream": {key: json.loads(value["output"]) for key, value in upstream.items()},
+            "intake_fields": intake_context(snapshot_inputs, spec) if spec else {},
+            "upstream_attempts": {key: value["attempt"] for key, value in upstream.items()},
+        }
+        g.generated_input = packed(incoming)
+        try:
+            provider = app.config["MAPPING_PROVIDER"] or configured_provider()
+            output = provider.generate(
+                n, incoming, dict(spec or {}, output_schema=step_schema(n, c))
+            )
+            g.generated_result = (
+                output,
+                "Structured output generated from the recorded snapshot and validated upstream steps; human review required.",
+                None,
+                False,
+            )
+        except (ProviderUnavailable, ProviderFailure) as exc:
+            g.generated_result = (
+                None,
+                "No valid provider output produced; inspect prerequisites before retrying.",
+                str(exc),
+                isinstance(exc, ProviderUnavailable),
+            )
+        return record_step(rid, n, provider_generation=True)
 
     @app.post("/api/admin/runs/<int:rid>/reports")
     @transaction
@@ -1124,15 +1199,23 @@ def create_app(test_config=None):
         c = current_run(r)
         if r["status"] != "complete":
             error("All four steps must have valid current outputs.", 409)
-        maps = validate_maps(c, d.get("maps"))
+        origin = "admin-edited"
+        if d.get("from_workflow") in (True, "1"):
+            from .mindpal import report_draft
+
+            outputs = {n: json.loads(latest_step(rid, n)["output"]) for n in range(1, 5)}
+            maps = validate_maps(c, report_draft(outputs))
+            origin = "generated"
+        else:
+            maps = validate_maps(c, d.get("maps"))
         version = one(
             "SELECT COALESCE(MAX(version),0)+1 AS v FROM reports WHERE student_id=?", (sid,)
         )["v"]
         nid = (
             db()
             .execute(
-                "INSERT INTO reports(student_id,run_id,version,origin,maps,status,created) VALUES(?,?,?,'admin-edited',?,'draft',?)",
-                (sid, rid, version, packed(maps), now()),
+                "INSERT INTO reports(student_id,run_id,version,origin,maps,status,created) VALUES(?,?,?,?,?,'draft',?)",
+                (sid, rid, version, origin, packed(maps), now()),
             )
             .lastrowid
         )
@@ -1324,6 +1407,296 @@ def create_app(test_config=None):
                 else redirect(url_for("mentor_workspace", sid=sid))
             )
         )
+
+    def imported_spec_by_hash(source_hash):
+        if not source_hash:
+            return None
+        record = one(
+            "SELECT normalized_json FROM mapping_imports WHERE source_sha256=? ORDER BY id DESC LIMIT 1",
+            (source_hash,),
+        )
+        return json.loads(record["normalized_json"]) if record else None
+
+    def private_mapping_spec(c):
+        return imported_spec_by_hash(c.get("mapping_profile", {}).get("source_sha256"))
+
+    @app.get("/api/admin/mapping-specification")
+    def mapping_specification():
+        need_role("admin")
+        _, c = cfg()
+        return jsonify(specification=private_mapping_spec(c), gaps=mapping_gaps(c))
+
+    @app.cli.command("import-mindpal")
+    @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+    @click.option("--mapping-prompt", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+    @click.option("--actor-email", required=True)
+    @click.option("--reason", "why", required=True)
+    def import_mindpal(path, mapping_prompt, actor_email, why):
+        from .mindpal import parse_export
+
+        actor = one("SELECT * FROM users WHERE email=? AND role='admin'", (actor_email,))
+        if not actor or not why.strip() or len(why) > 2000:
+            raise click.ClickException("Existing admin and a review reason are required.")
+        try:
+            raw = path.read_bytes()
+            spec = parse_export(raw)
+            prompt_raw = mapping_prompt.read_bytes() if mapping_prompt else None
+            if prompt_raw is not None:
+                from .mindpal import supplement_mapping
+
+                spec = supplement_mapping(spec, prompt_raw)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        g.user = actor
+        db().execute("BEGIN IMMEDIATE")
+        try:
+            v, c = cfg()
+            if c.get("mapping_profile", {}).get("source_sha256") == spec["sha256"]:
+                db().execute("COMMIT")
+                click.echo("This exact export is already imported; configuration unchanged.")
+                return
+            for key in [
+                "student_personas",
+                "parent_personas",
+                "empathy_categories",
+                "journey_fields",
+            ]:
+                c[key] = spec[key] + (
+                    ["human intervention"] if key == "journey_fields" and not prompt_raw else []
+                )
+            c["journey_stages"] = spec["journey_stages"]
+            if prompt_raw:
+                c["mapping_details"] = {
+                    key: spec[key]
+                    for key in ["evidence_types", "persona_details", "empathy_factors"]
+                }
+            else:
+                c.pop("mapping_details", None)
+            c["mapping_profile"] = {"kind": "mindpal-four-step", "source_sha256": spec["sha256"]}
+            config_validate(c)
+            db().execute(
+                "INSERT INTO mapping_imports(config_version,source_sha256,source_json,source_prompt,normalized_json,actor_id,reason,created) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    v + 1,
+                    spec["sha256"],
+                    raw.decode(),
+                    prompt_raw.decode("utf-8-sig") if prompt_raw else None,
+                    packed(spec),
+                    actor["id"],
+                    why.strip(),
+                    now(),
+                ),
+            )
+            db().execute("UPDATE settings SET version=version+1,body=? WHERE id=1", (packed(c),))
+            for student in rows("SELECT id FROM users WHERE role='student'"):
+                invalidate(student["id"], "Imported source mapping configuration: " + why)
+            audit("mapping-specification-import", None, v + 1, why)
+            db().execute("COMMIT")
+        except BaseException:
+            db().execute("ROLLBACK")
+            raise
+        click.echo(
+            "Imported private four-step instructions and supplied enumerations. Full mapping gaps: "
+            + ", ".join(mapping_gaps(c))
+            + ". Readiness/provider/policy requirements still apply. Scoring/matching branches remain disabled."
+        )
+
+    def own_intake(sid):
+        access(sid, "student", "parent")
+        if g.user["role"] == "student" and not unlocked(sid, 1):
+            error(LOCKED, 403)
+        _, c = cfg()
+        spec = private_mapping_spec(c)
+        if not spec:
+            error("Intake is waiting for the supplied mapping configuration to be imported.", 409)
+        from .mindpal import PARENT_FIELDS, STUDENT_FIELDS
+
+        allowed = STUDENT_FIELDS if g.user["role"] == "student" else PARENT_FIELDS
+        fields = [f for f in spec["fields"] if f["label"] in allowed]
+        entry = one(
+            "SELECT * FROM intake_entries WHERE student_id=? AND actor_id=?", (sid, g.user["id"])
+        )
+        return entry, fields, allowed
+
+    @app.get("/students/<int:sid>/intake")
+    def intake_page(sid):
+        entry, fields, _ = own_intake(sid)
+        entry = entry or {
+            "id": None,
+            "version": 0,
+            "draft": "{}",
+            "submissions": 0,
+            "submitted": None,
+        }
+        return render_template(
+            "intake.html",
+            sid=sid,
+            entry=entry,
+            fields=fields,
+            request_key=secrets.token_urlsafe(24),
+            read_only=entry["submissions"] >= 2
+            or (g.user["role"] == "student" and stage(sid, 1)["status"] == "complete"),
+        )
+
+    @app.route("/api/students/<int:sid>/intake", methods=["GET", "POST"])
+    @transaction
+    def intake_api(sid):
+        entry, fields, allowed = own_intake(sid)
+        if request.method == "GET":
+            return jsonify(entry=entry, fields=fields)
+        if not request.is_json and not request.form.get("expected_version", "0").isdigit():
+            error("Invalid saved-entry version.")
+        d = (
+            data()
+            if request.is_json
+            else {
+                "action": request.form.get("action"),
+                "expected_version": int(request.form.get("expected_version", "0")),
+                "request_key": request.form.get("request_key"),
+                "values": {key: request.form.get(key, "") for key in allowed},
+            }
+        )
+        validate(
+            obj(
+                {
+                    "action": {"enum": ["save", "submit"]},
+                    "expected_version": {"type": "integer", "minimum": 0},
+                    "request_key": SHORT,
+                    "values": obj({key: TEXT for key in allowed}, required=[]),
+                }
+            ),
+            d,
+        )
+        if not entry:
+            db().execute(
+                "INSERT INTO intake_entries(student_id,actor_id,role,config_version,updated) VALUES(?,?,?,?,?)",
+                (sid, g.user["id"], g.user["role"], cfg()[0], now()),
+            )
+            entry = one(
+                "SELECT * FROM intake_entries WHERE student_id=? AND actor_id=?",
+                (sid, g.user["id"]),
+            )
+        duplicate = one(
+            "SELECT fingerprint,result FROM intake_requests WHERE entry_id=? AND request_key=?",
+            (entry["id"], d["request_key"]),
+        )
+        fingerprint = digest(packed(d))
+        if duplicate:
+            if duplicate["fingerprint"] != fingerprint:
+                error(
+                    "This request key was used for different content. Reload and review your saved entry.",
+                    409,
+                )
+            return (
+                jsonify(json.loads(duplicate["result"]))
+                if request.is_json
+                else redirect(url_for("intake_page", sid=sid))
+            )
+        if entry["submissions"] >= 2:
+            error(
+                "Your one resubmission has been used. Contact the team for an audited correction.",
+                409,
+            )
+        if entry["version"] != d["expected_version"]:
+            error("Your saved entry changed. Reload before editing.", 409)
+        if g.user["role"] == "student" and stage(sid, 1)["status"] == "complete":
+            error("Completed work is read-only. Ask admin for an audited correction.", 409)
+        if d["action"] == "submit" and any(
+            f["required"] and not d["values"].get(f["label"], "").strip() for f in fields
+        ):
+            error(
+                "Complete required fields: "
+                + ", ".join(
+                    f["label"]
+                    for f in fields
+                    if f["required"] and not d["values"].get(f["label"], "").strip()
+                )
+            )
+        version = entry["version"] + 1
+        submitted = d["action"] == "submit"
+        db().execute(
+            "UPDATE intake_entries SET config_version=?,draft=?,version=?,updated=?,submitted=CASE WHEN ? THEN ? ELSE submitted END,submitted_version=CASE WHEN ? THEN ? ELSE submitted_version END,submissions=submissions+? WHERE id=?",
+            (
+                cfg()[0],
+                packed(d["values"]),
+                version,
+                now(),
+                submitted,
+                packed(d["values"]),
+                submitted,
+                version,
+                submitted,
+                entry["id"],
+            ),
+        )
+        if g.user["role"] == "student" and (submitted or entry["submissions"] == 0):
+            # Stage 1 reviews the actual submitted form. Later unsent revision drafts stay private.
+            db().execute(
+                "UPDATE stages SET draft=?,status=?,revision=revision+1 WHERE student_id=? AND stage=1",
+                (packed(d["values"]), "submitted" if submitted else "draft", sid),
+            )
+            if not submitted:
+                invalidate(sid, "Profile draft changed; previous snapshots require review.")
+        if submitted:
+            db().execute(
+                "INSERT INTO intake_versions VALUES(?,?,?,?,?)",
+                (entry["id"], version, cfg()[0], packed(d["values"]), now()),
+            )
+            for label in set(d["values"]) | set(json.loads(entry["submitted"] or "{}")):
+                value = d["values"].get(label, "")
+                old = one(
+                    "SELECT evidence_id FROM intake_evidence WHERE entry_id=? AND field=?",
+                    (entry["id"], label),
+                )
+                previous = old["evidence_id"] if old else None
+                # Admin may have corrected this source since the user's prior submission.
+                while previous and (
+                    newer := one("SELECT id FROM evidence WHERE corrected_from=?", (previous,))
+                ):
+                    previous = newer["id"]
+                revision = (
+                    (one("SELECT revision FROM evidence WHERE id=?", (previous,))["revision"] + 1)
+                    if previous
+                    else 1
+                )
+                eid = (
+                    db()
+                    .execute(
+                        "INSERT INTO evidence(student_id,stakeholder,source,type,statement,revision,corrected_from) VALUES(?,?,?,?,?,?,?)",
+                        (
+                            sid,
+                            g.user["role"],
+                            "Intake: " + label + " [actor=" + str(g.user["id"]) + "]",
+                            allowed[label] if value.strip() else "missing evidence",
+                            value,
+                            revision,
+                            previous,
+                        ),
+                    )
+                    .lastrowid
+                )
+                db().execute(
+                    "INSERT INTO intake_evidence VALUES(?,?,?) ON CONFLICT(entry_id,field) DO UPDATE SET evidence_id=excluded.evidence_id",
+                    (entry["id"], label, eid),
+                )
+            invalidate(sid, "Submitted intake changed; save and review a new mapping snapshot.")
+        result = {
+            "id": entry["id"],
+            "version": version,
+            "status": "submitted" if submitted else "draft",
+            "submissions": entry["submissions"] + int(submitted),
+        }
+        db().execute(
+            "INSERT INTO intake_requests VALUES(?,?,?,?)",
+            (entry["id"], d["request_key"], fingerprint, packed(result)),
+        )
+        audit(
+            "intake-" + d["action"],
+            sid,
+            entry["id"],
+            "Own attributed intake; no stage completion or report publication",
+        )
+        return jsonify(result) if request.is_json else redirect(url_for("intake_page", sid=sid))
 
     @app.cli.command("init-db")
     def init_db():

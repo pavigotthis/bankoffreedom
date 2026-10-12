@@ -122,6 +122,16 @@ def config_validate(c):
     validate(
         obj(
             {
+                "mapping_details": obj(
+                    {
+                        "evidence_types": STRINGS,
+                        "persona_details": STRINGS,
+                        "empathy_factors": STRINGS,
+                    }
+                ),
+                "mapping_profile": obj(
+                    {"kind": {"const": "mindpal-four-step"}, "source_sha256": SHORT}
+                ),
                 "stage_rules": {
                     "type": "object",
                     "patternProperties": {"^[1-8]$": rule},
@@ -138,7 +148,8 @@ def config_validate(c):
                     "uniqueItems": True,
                 },
                 "journey_fields": STRINGS,
-            }
+            },
+            required=list(DEFAULT_CONFIG),
         ),
         c,
     )
@@ -150,7 +161,17 @@ def config_validate(c):
     return c
 
 
-def mapping_gaps(c):
+def mapping_gaps(c, step=None):
+    required = {
+        1: [],
+        2: ["student_personas", "parent_personas"],
+        3: ["empathy_categories"],
+        4: ["journey_fields"],
+    }
+    if step is not None:
+        return [k for k in required[step] if not c[k]] + (
+            ["eighteen journey_stages"] if step == 4 and len(c["journey_stages"]) != 18 else []
+        )
     return [
         k
         for k in ["student_personas", "parent_personas", "empathy_categories", "journey_fields"]
@@ -172,7 +193,9 @@ def step_schema(n, c):
                 "original_statement": TEXT,
                 "stakeholder": {"enum": ["student", "parent", "educator", "mentor"]},
                 "source": SHORT,
-                "evidence_type": {"enum": EVIDENCE_TYPES},
+                "evidence_type": {
+                    "enum": c.get("mapping_details", {}).get("evidence_types", EVIDENCE_TYPES)
+                },
                 "career_dimension": SHORT,
                 "sentiment": SHORT,
                 "confidence": CONF,
@@ -199,7 +222,15 @@ def step_schema(n, c):
                 )
             )
 
-        return obj({"student": persona("student"), "parent": persona("parent")})
+        result = obj({"student": persona("student"), "parent": persona("parent")})
+        if c.get("mapping_profile"):
+            from .mindpal import PERSONA_DETAILS
+
+            for role in ["student", "parent"]:
+                for key in c.get("mapping_details", {}).get("persona_details", PERSONA_DETAILS):
+                    result["properties"][role]["properties"][key] = STRINGS
+                    result["properties"][role]["required"].append(key)
+        return result
     if n == 3:
         row = obj(
             dict(
@@ -210,7 +241,16 @@ def step_schema(n, c):
                 validation_status={"enum": ["needs validation", "reviewed"]},
             )
         )
-        return obj(
+        if c.get("mapping_details"):
+            row["properties"]["insight_basis"] = {
+                "enum": [
+                    "supported by supplied evidence",
+                    "assumption requiring validation",
+                    "missing evidence",
+                ]
+            }
+            row["required"].append("insight_basis")
+        result = obj(
             {
                 role: {
                     "type": "array",
@@ -221,6 +261,32 @@ def step_schema(n, c):
                 for role in ["student", "parent"]
             }
         )
+        if c.get("mapping_profile"):
+            from .mindpal import EMPATHY_FACTORS
+
+            factor = obj(
+                dict(
+                    trace,
+                    text=TEXT,
+                    source=SHORT,
+                    validation_status={"enum": ["needs validation", "reviewed"]},
+                )
+            )
+            result["properties"]["factors"] = obj(
+                {
+                    role: obj(
+                        {
+                            key: factor
+                            for key in c.get("mapping_details", {}).get(
+                                "empathy_factors", EMPATHY_FACTORS
+                            )
+                        }
+                    )
+                    for role in ["student", "parent"]
+                }
+            )
+            result["required"].append("factors")
+        return result
     row = obj(
         dict(
             trace,
@@ -251,8 +317,10 @@ def validate_output(n, c, out, inputs):
                 or e["original_statement"] != r["statement"]
             ):
                 raise ValueError("Original statement and source attribution must be preserved")
-            if r["type"] == "assumption" and e["evidence_type"] == "fact":
+            if r["type"] == "assumption" and e["evidence_type"].lower() in ("fact", "stated fact"):
                 raise ValueError("An assumption cannot become a fact")
+            if r["type"] == "missing evidence" and e["evidence_type"].lower() != "missing evidence":
+                raise ValueError("Missing evidence must remain explicitly missing")
 
     def refs(v):
         if isinstance(v, dict):
@@ -265,6 +333,20 @@ def validate_output(n, c, out, inputs):
                 refs(x)
 
     refs(out)
+    if n == 2 and c.get("mapping_profile"):
+        for role in ["student", "parent"]:
+            persona = out[role]
+            if persona["selected_hypothesis"] is not None and not any(
+                records[i]["stakeholder"] == role
+                and records[i]["type"] not in ("missing evidence", "assumption")
+                and bool(records[i]["statement"].strip())
+                for i in persona["supporting_evidence"]
+            ):
+                raise ValueError(
+                    "A persona requires evidence from that stakeholder that is non-missing and not an assumption"
+                )
+            if persona["selected_hypothesis"] is None and not persona["missing_evidence"]:
+                raise ValueError("An unselected persona must explain insufficient evidence")
     if n in (3, 4):
         key, options = (
             ("category", c["empathy_categories"]) if n == 3 else ("stage", c["journey_stages"])

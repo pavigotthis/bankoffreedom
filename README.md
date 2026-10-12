@@ -85,3 +85,7 @@ It starts/stops its own isolated server/database, uses explicitly fictional fixt
 ## Before live use
 
 Supply the missing detailed mapping specification, approved instruments and criteria, approved linking/provisioning scopes, minor consent/guardian/privacy/retention/deletion/export/incident policies, and selected provider/delivery/hosting integrations. Operational security, backups, accessibility conformance and device coverage require defined standards and review. See the full blockers in `docs/decisions.md`. No production readiness or live-data activation is claimed.
+
+## Supplied mapping workflow
+
+See [private export import and intake setup](docs/mindpal-import.md). Apply migration 003, import the user-supplied JSON and original mapping prompt privately, then configure remaining readiness/provider decisions. Persistent student/parent intake and all four mapping definitions—including the exact eighteen stages—are supported; provider credentials and source-backed readiness decisions are still absent. No extra scoring, career ranking or automatic mentor matching branch is enabled.
