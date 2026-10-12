@@ -146,6 +146,11 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                     "SYNTHETIC Browser Student"
                 )
                 page.goto(url + "/student/stages/1")
+                expect(page.locator(".profile-name")).to_contain_text("SYNTHETIC Browser Student")
+                expect(page.locator(".account-name")).to_have_text("SYNTHETIC Browser Student")
+                page.reload()
+                expect(page.locator(".profile-name")).to_contain_text("SYNTHETIC Browser Student")
+                expect(page.locator(".account-name")).to_have_text("SYNTHETIC Browser Student")
                 expect(page.get_by_label("Student Responses", exact=False)).to_be_visible()
                 page.get_by_role("button", name="Submit for review", exact=True).click()
                 expect(page.locator(".form-status")).to_contain_text("Complete required fields")
@@ -164,6 +169,9 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                 )
                 page = context.new_page()
                 sign_in("admin@synthetic.test", True)
+                expect(
+                    page.get_by_role("heading", name="SYNTHETIC Browser Student", exact=True)
+                ).to_be_visible()
                 page.goto(url + "/admin/setup/mapping")
                 expect(
                     page.get_by_role("heading", name="Independent mapping configuration")
