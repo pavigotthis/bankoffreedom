@@ -94,3 +94,20 @@ def test_name_change_requires_owner_session_csrf_and_escapes_html(app):
     html = login(app.test_client()).get("/admin/dashboard").text
     assert "<script>synthetic</script>" not in html
     assert "&lt;script&gt;synthetic&lt;/script&gt;" in html
+
+
+@pytest.mark.parametrize(
+    "role,email,path",
+    [
+        ("student", "student@example.test", "/student/stages/1"),
+        ("parent", "parent@example.test", "/students/1/intake"),
+    ],
+)
+def test_saved_name_visible_in_profile_and_navigation(app, role, email, path):
+    client = login(app.test_client(), email)
+    assert post(client, "/account/name", {"name": "Synthetic Visible Name"}).status_code == 200
+    html = client.get(path).text
+    assert "Synthetic Visible Name" in html
+    assert 'aria-label="Edit your name: Synthetic Visible Name"' in html
+    assert 'class="profile-name"' in html
+    assert ">Edit name</a>" in html
