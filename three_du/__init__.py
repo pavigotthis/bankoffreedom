@@ -436,6 +436,21 @@ def create_app(test_config=None):
             "stages": STAGES,
             "pending": PENDING,
             "synthetic_only": app.config["SYNTHETIC_ONLY"],
+            "status_labels": {
+                "empty": "Not started",
+                "draft": "Draft saved",
+                "submitted": "Submitted for review",
+                "complete": "Completed",
+                "available": "Available",
+            },
+            "has_mapping_setup": bool(
+                g.user
+                and g.user["role"] == "admin"
+                and one(
+                    "SELECT actor_id FROM admin_capabilities WHERE actor_id=? AND capability='mapping_setup'",
+                    (g.user["id"],),
+                )
+            ),
         }
 
     @app.errorhandler(400)
@@ -448,6 +463,32 @@ def create_app(test_config=None):
     def failure(e):
         if request.path.startswith("/api/") or request.is_json:
             return jsonify(error=e.description), e.code
+        modes = {
+            "/signup": "signup",
+            "/login": "login",
+            "/admin/login": "login",
+            "/recover": "recover",
+            "/reset": "reset",
+        }
+        if request.method == "POST" and request.path in modes:
+            safe_values = {
+                key: request.form.get(key, "")[:limit]
+                for key, limit in [("email", 254), ("name", 120), ("role", 20), ("synthetic", 3)]
+            }
+            return render_template(
+                "auth.html",
+                mode=modes[request.path],
+                admin_login=request.path == "/admin/login",
+                form_values=safe_values,
+                form_error=e.description,
+                reset_token=request.form.get("token", ""),
+            ), e.code
+        if request.method == "POST" and request.path == "/account/name" and g.user:
+            return render_template(
+                "account_name.html",
+                form_error=e.description,
+                entered_name=request.form.get("name", "")[:120],
+            ), e.code
         return render_template("error.html", message=e.description, status=e.code), e.code
 
     @app.errorhandler(ValueError)
@@ -1330,7 +1371,7 @@ def create_app(test_config=None):
         c = current_run(run)
         if run["status"] != "complete":
             error("Rerun affected workflow steps before revising the report.", 409)
-        if not request.is_json and d.get("browser_editor") == "1":
+        if d.get("browser_editor") in ("1", True):
             if not str(d.get("expected_version", "")).isdigit():
                 error("Invalid report version.")
             d["expected_version"] = int(d["expected_version"])
@@ -1471,6 +1512,8 @@ def create_app(test_config=None):
             sid=sid,
             work=relevant,
             reports=reports,
+            mentor_inputs_enabled=cfg()[1].get("mapping_profile", {}).get("kind")
+            == "3du-standalone",
             notes=rows(
                 "SELECT * FROM notes WHERE student_id=? AND actor_id=? AND kind='session'",
                 (sid, g.user["id"]),

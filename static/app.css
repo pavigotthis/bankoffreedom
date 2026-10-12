@@ -3,3 +3,5 @@
 .portal-layout > *{min-width:0}
 
 .account-name{max-width:160px;overflow-wrap:anywhere}.profile-name{overflow-wrap:anywhere}
+
+.account-identity{font-size:12px;max-width:200px;overflow-wrap:anywhere}

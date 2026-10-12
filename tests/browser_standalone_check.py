@@ -115,6 +115,23 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                     page.wait_for_load_state("networkidle")
 
                 page.goto(url + "/signup")
+                page.get_by_label("Your name", exact=True).fill("SYNTHETIC Retry Parent")
+                page.get_by_label("Email address", exact=True).fill("retry@synthetic.test")
+                page.get_by_label("Account type", exact=True).select_option("parent")
+                page.locator("input[name=synthetic]").check()
+                page.locator("input[name=password]").fill("short")
+                page.locator("form[method=post]").evaluate("form => form.noValidate = true")
+                page.get_by_role("button", name="Create development account", exact=True).click()
+                expect(page.get_by_role("alert")).to_be_visible()
+                expect(page.get_by_label("Your name", exact=True)).to_have_value(
+                    "SYNTHETIC Retry Parent"
+                )
+                expect(page.get_by_label("Email address", exact=True)).to_have_value(
+                    "retry@synthetic.test"
+                )
+                expect(page.locator("input[name=password]")).to_have_value("")
+                page.get_by_role("button", name="Show password", exact=True).click()
+                expect(page.locator("input[name=password]")).to_have_attribute("type", "text")
                 expect(page.get_by_label("Your name", exact=True)).to_be_visible()
                 assert (
                     page.get_by_label("Your name", exact=True).get_attribute("required") is not None
@@ -154,6 +171,36 @@ with tempfile.TemporaryDirectory(prefix="3du-standalone-browser-") as directory:
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 page.keyboard.press("Tab")
                 assert page.evaluate("document.activeElement.tagName") != "BODY"
+                context.close()
+                context = browser.new_context(
+                    viewport={"width": width, "height": 850}, reduced_motion="reduce"
+                )
+                page = context.new_page()
+                sign_in("parent@synthetic.test")
+                page.goto(url + "/parent/students/2")
+                expect(page.get_by_text("0 of 8 stages completed.", exact=True)).to_be_visible()
+                assert page.locator('a[href="/student/stages/1"]').count() == 0
+                page.get_by_role("link", name="Save and submit your own perspective").click()
+                expect(page.get_by_label("Parent Responses", exact=False)).to_be_visible()
+                assert page.locator('textarea[name="Student Responses"]').count() == 0
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                context.close()
+                context = browser.new_context(
+                    viewport={"width": width, "height": 850}, reduced_motion="reduce"
+                )
+                page = context.new_page()
+                sign_in("mentor@synthetic.test")
+                page.goto(url + "/mentor/students/2")
+                assert page.locator(".json-form").count() == 0
+                page.get_by_label("Relevant session record", exact=True).fill(
+                    "SYNTHETIC browser session record"
+                )
+                page.get_by_label("Record reason", exact=True).fill("SYNTHETIC session logging")
+                page.get_by_role("button", name="Save session record", exact=True).click()
+                expect(
+                    page.get_by_text("SYNTHETIC browser session record", exact=True).first
+                ).to_be_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 context.close()
             browser.close()
         print(

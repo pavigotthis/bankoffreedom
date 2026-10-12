@@ -54,3 +54,7 @@ To install this incremental update, pull the new code, run `backup-db`, run `ini
 Create Profile now displays the confirmed structured student input fields inline. The old Enter and resume link and generic development-notes editor are removed from Stage 1. The standalone intake URL still works, and confirmed student/parent draft forms are usable without importing private AI configuration. Missing completion/readiness rules remain separate blockers; they do not hide these input fields.
 
 Migration 006 preserves earlier generic profile notes without treating them as structured answers. Existing notes stay reviewable privately after new draft saves. The same entry, submission limit, conflict checks, authorized admin visibility and parent/student separation remain enforced. Pull code, back up the database, apply `init-db`, then reload the web app; this fix does not require JSON reupload.
+
+## Basic usability update
+
+The latest update keeps safe form details on errors, shows understandable progress and next actions, makes Stage 8 view-only, provides normal mentor review/session forms, hides unavailable setup links and displays signed-in account identity. Pull the code and reload the existing web app. No new migration or JSON import is needed for these usability changes. Previously required migrations still need to be applied if earlier updates were skipped. Approved assessment content, stage/readiness criteria, educator scope, provider/model and live-data policies remain separate blockers.
