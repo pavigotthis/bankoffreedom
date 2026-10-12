@@ -80,7 +80,7 @@ for (const form of document.querySelectorAll('.operation-form')) {
     const payload = {};
     for (const [key, value] of new FormData(form)) {
       if (key === 'csrf') continue;
-      payload[key] = ['revision', 'expected_attempt', 'version', 'expected_version'].includes(key) ? Number(value) : value;
+      payload[key] = key === 'wording_reviewed' ? value === 'true' : ['revision', 'expected_attempt', 'version', 'expected_version'].includes(key) ? Number(value) : value;
     }
     send(form, form.action, payload);
   });

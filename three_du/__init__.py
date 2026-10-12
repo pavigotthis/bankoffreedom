@@ -186,11 +186,19 @@ def create_app(test_config=None):
         )
         if not r:
             return {"status": "pending", "message": PENDING}
+        maps = json.loads(r["maps"])
+        if cfg()[1].get("mapping_profile", {}).get("kind") == "3du-standalone":
+            for role in ["student", "parent"]:
+                # Historic publications stay intact; never expose their full analytical arrays.
+                maps[role + "_journey"] = {
+                    "summary": maps[role + "_journey"]["summary"],
+                    "items": [],
+                }
         return {
             "status": "published",
             "version": r["version"],
             "published_at": r["published_at"],
-            "maps": json.loads(r["maps"]),
+            "maps": maps,
         }
 
     def invalidate(sid, why, run_id=None, from_step=1):
@@ -225,8 +233,36 @@ def create_app(test_config=None):
         }
 
     def readiness(sid, c):
+        mandatory_gaps = []
+        if c.get("mapping_profile", {}).get("kind") == "3du-standalone":
+            from .standalone import MANDATORY
+
+            for role in ["student", "parent"]:
+                entries = rows(
+                    "SELECT actor_id,submitted FROM intake_entries WHERE student_id=? AND role=? AND submitted IS NOT NULL",
+                    (sid, role),
+                )
+                valid = any(
+                    (
+                        role == "student"
+                        or one(
+                            "SELECT actor_id FROM relationships WHERE actor_id=? AND student_id=? AND kind='parent'",
+                            (e["actor_id"], sid),
+                        )
+                    )
+                    and all(
+                        json.loads(e["submitted"]).get(label, "").strip()
+                        for label in MANDATORY[role]
+                    )
+                    for e in entries
+                )
+                if not valid:
+                    mandatory_gaps.append("Mandatory " + role + " input submission")
+            mandatory_gaps.append(
+                "Professional-note applicability and educator authorization require owner setup."
+            )
         if not c["readiness"]:
-            return ["Mapping readiness criteria have not been approved."]
+            return mandatory_gaps + ["Mapping readiness criteria have not been approved."]
         missing = [
             f"Stage {n} completion"
             for n in c["readiness"]["required_stages"]
@@ -242,7 +278,7 @@ def create_app(test_config=None):
                 (snap["id"], kind, version),
             ):
                 missing.append("Source-backed readiness review: " + kind)
-        return missing
+        return mandatory_gaps + missing
 
     def input_bundle(sid):
         inputs = rows(
@@ -842,7 +878,24 @@ def create_app(test_config=None):
         v, c = cfg()
         if d.get("version") != v:
             error("Configuration changed. Reload before saving.", 409)
-        c = config_validate(d.get("configuration"))
+        proposed = config_validate(d.get("configuration"))
+        if (
+            c.get("mapping_profile", {}).get("kind") == "3du-standalone"
+            or proposed.get("mapping_profile", {}).get("kind") == "3du-standalone"
+        ):
+            setup_access()
+            for key in [
+                "mapping_profile",
+                "mapping_details",
+                "student_personas",
+                "parent_personas",
+                "empathy_categories",
+                "journey_stages",
+                "journey_fields",
+            ]:
+                if c.get(key) != proposed.get(key):
+                    error("Use the versioned standalone setup review and activation process.", 409)
+        c = proposed
         db().execute("UPDATE settings SET version=version+1,body=? WHERE id=1", (packed(c),))
         # Global specification changes invalidate every unpublished dependent artifact.
         for s in rows("SELECT id FROM users WHERE role='student'"):
@@ -1204,7 +1257,12 @@ def create_app(test_config=None):
             from .mindpal import report_draft
 
             outputs = {n: json.loads(latest_step(rid, n)["output"]) for n in range(1, 5)}
-            maps = validate_maps(c, report_draft(outputs))
+            maps = validate_maps(
+                c,
+                report_draft(
+                    outputs, concise=c.get("mapping_profile", {}).get("kind") == "3du-standalone"
+                ),
+            )
             origin = "generated"
         else:
             maps = validate_maps(c, d.get("maps"))
@@ -1234,6 +1292,21 @@ def create_app(test_config=None):
         c = current_run(run)
         if run["status"] != "complete":
             error("Rerun affected workflow steps before revising the report.", 409)
+        if not request.is_json and d.get("browser_editor") == "1":
+            if not str(d.get("expected_version", "")).isdigit():
+                error("Invalid report version.")
+            d["expected_version"] = int(d["expected_version"])
+            source_maps = json.loads(r["maps"])
+            d["maps"] = {
+                key: {
+                    "summary": d.get(key + "_summary", ""),
+                    "items": [
+                        {"label": item["label"], "text": d.get(key + "_item_" + str(index), "")}
+                        for index, item in enumerate(value["items"])
+                    ],
+                }
+                for key, value in source_maps.items()
+            }
         latest = one("SELECT MAX(version) AS v FROM reports WHERE student_id=?", (sid,))["v"]
         if d.get("expected_version") != latest or r["version"] != latest:
             error("Report changed. Review the latest version.", 409)
@@ -1250,6 +1323,8 @@ def create_app(test_config=None):
             .lastrowid
         )
         audit("report-edited", sid, nid, why)
+        if not request.is_json and d.get("browser_editor") == "1":
+            return redirect(f"/admin/students/{sid}#reports")
         return response({"id": nid, "version": version, "approvals": []}, sid)
 
     @app.post("/api/reports/<int:rid>/approve")
@@ -1264,6 +1339,12 @@ def create_app(test_config=None):
         if d.get("version") != r["version"]:
             error("Approval must reference the exact reviewed version.", 409)
         role = g.user["role"]
+        if cfg()[1].get("mapping_profile", {}).get("kind") == "3du-standalone" and any(
+            "requires admin editing before approval"
+            in json.loads(r["maps"])[role_name + "_journey"]["summary"]
+            for role_name in ["student", "parent"]
+        ):
+            error("Write and review both concise journey summaries before approval.", 409)
         if role == "admin" and d.get("wording_reviewed") is not True:
             error("Review shared wording for both student and parent before approving.", 409)
         if role == "mentor":
@@ -1448,6 +1529,10 @@ def create_app(test_config=None):
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
         g.user = actor
+        if cfg()[1].get("mapping_profile", {}).get("kind") == "3du-standalone":
+            raise click.ClickException(
+                "Use import-3du-mapping for the active standalone installation."
+            )
         db().execute("BEGIN IMMEDIATE")
         try:
             v, c = cfg()
@@ -1500,6 +1585,223 @@ def create_app(test_config=None):
             + ", ".join(mapping_gaps(c))
             + ". Readiness/provider/policy requirements still apply. Scoring/matching branches remain disabled."
         )
+
+    def setup_access():
+        need_role("admin")
+        if not one(
+            "SELECT actor_id FROM admin_capabilities WHERE actor_id=? AND capability='mapping_setup'",
+            (g.user["id"],),
+        ):
+            error("Mapping setup requires a separately provisioned capability.", 403)
+
+    @app.cli.command("grant-mapping-setup")
+    @click.option("--actor-email", required=True)
+    @click.option("--authorized-by", required=True)
+    @click.option("--reason", "why", required=True)
+    def grant_mapping_setup(actor_email, authorized_by, why):
+        actor = one("SELECT * FROM users WHERE email=? AND role='admin'", (actor_email,))
+        owner = one("SELECT * FROM users WHERE email=? AND role='admin'", (authorized_by,))
+        if not actor or not owner or not why.strip():
+            raise click.ClickException(
+                "Existing admin accounts and an authorization reason required."
+            )
+        # Trusted host-console provisioning; no public capability-grant endpoint exists.
+        g.user = owner
+        db().execute("BEGIN IMMEDIATE")
+        try:
+            db().execute(
+                "INSERT OR IGNORE INTO admin_capabilities VALUES(?,'mapping_setup',?,?,?)",
+                (actor["id"], owner["id"], why, now()),
+            )
+            audit("grant-mapping-setup", None, actor["id"], why)
+            db().execute("COMMIT")
+        except BaseException:
+            db().execute("ROLLBACK")
+            raise
+        click.echo(
+            "Mapping setup capability provisioned. Educator/live-data permissions are not granted."
+        )
+
+    def activate_standalone(raw, actor, why):
+        from .standalone import apply_to_config, parse_configuration
+
+        spec = parse_configuration(raw)
+        v, c = cfg()
+        if c.get("mapping_profile", {}).get("source_sha256") == spec["sha256"]:
+            return {"version": v, "repeated": True}
+        c = config_validate(apply_to_config(c, spec))
+        db().execute(
+            "INSERT INTO mapping_imports(config_version,source_sha256,source_json,normalized_json,actor_id,reason,created) VALUES(?,?,?,?,?,?,?)",
+            (v + 1, spec["sha256"], raw.decode(), packed(spec), actor["id"], why, now()),
+        )
+        db().execute("UPDATE settings SET version=version+1,body=? WHERE id=1", (packed(c),))
+        for student in rows("SELECT id FROM users WHERE role='student'"):
+            invalidate(student["id"], "Standalone configuration activated: " + why)
+        audit("standalone-configuration-activated", None, v + 1, why)
+        return {"version": v + 1}
+
+    @app.cli.command("import-3du-mapping")
+    @click.argument("path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+    @click.option("--actor-email", required=True)
+    @click.option("--reason", "why", required=True)
+    def import_3du_mapping(path, actor_email, why):
+        actor = one("SELECT * FROM users WHERE email=? AND role='admin'", (actor_email,))
+        if (
+            not actor
+            or not one(
+                "SELECT actor_id FROM admin_capabilities WHERE actor_id=? AND capability='mapping_setup'",
+                (actor["id"],),
+            )
+            or not why.strip()
+        ):
+            raise click.ClickException(
+                "Provisioned mapping-setup admin and authorization reason required."
+            )
+        g.user = actor
+        db().execute("BEGIN IMMEDIATE")
+        try:
+            result = activate_standalone(path.read_bytes(), actor, why)
+            db().execute("COMMIT")
+        except BaseException as exc:
+            db().execute("ROLLBACK")
+            raise click.ClickException(str(exc)) from exc
+        click.echo(
+            "Independent 3DU configuration active, version "
+            + str(result["version"])
+            + ". Readiness/provider/policy blockers still apply."
+        )
+
+    @app.get("/admin/setup/mapping")
+    def standalone_setup():
+        setup_access()
+        return render_template(
+            "mapping_setup.html",
+            drafts=rows(
+                "SELECT id,base_version,state,actor_id,approved_by,reason,created FROM mapping_configuration_drafts ORDER BY id DESC"
+            ),
+            config_version=cfg()[0],
+        )
+
+    @app.post("/api/admin/setup/mapping")
+    @transaction
+    def standalone_upload():
+        setup_access()
+        from .standalone import parse_configuration
+
+        why = reason(data())
+        upload = request.files.get("configuration")
+        if not upload:
+            error("Choose the private standalone JSON file.")
+        raw = upload.read()
+        spec = parse_configuration(raw)
+        identifier = (
+            db()
+            .execute(
+                "INSERT INTO mapping_configuration_drafts(source_json,source_sha256,base_version,state,actor_id,reason,created) VALUES(?,?,?,'draft',?,?,?)",
+                (raw.decode(), spec["sha256"], cfg()[0], g.user["id"], why, now()),
+            )
+            .lastrowid
+        )
+        audit("standalone-configuration-draft", None, identifier, why)
+        return redirect(url_for("standalone_setup"))
+
+    @app.post("/api/admin/setup/mapping/<int:identifier>/<action>")
+    @transaction
+    def standalone_transition(identifier, action):
+        setup_access()
+        from .standalone import parse_configuration
+
+        why = reason(data())
+        record = one("SELECT * FROM mapping_configuration_drafts WHERE id=?", (identifier,))
+        if not record:
+            error("Configuration draft not found.", 404)
+        transitions = {
+            "validate": ("draft", "validated"),
+            "approve": ("validated", "approved"),
+            "activate": ("approved", "active"),
+        }
+        if action not in transitions or record["state"] != transitions[action][0]:
+            error("Configuration state changed. Reload and review.", 409)
+        if record["base_version"] != cfg()[0]:
+            error("The active configuration changed. Upload a new draft for review.", 409)
+        parse_configuration(record["source_json"].encode())
+        if action == "approve" and request.form.get("owner_approved") != "yes":
+            error("Record authorized owner approval before activation.")
+        if action == "activate":
+            activate_standalone(record["source_json"].encode(), g.user, why)
+        db().execute(
+            "UPDATE mapping_configuration_drafts SET state=?,approved_by=CASE WHEN ? THEN ? ELSE approved_by END WHERE id=?",
+            (transitions[action][1], action == "approve", g.user["id"], identifier),
+        )
+        audit("standalone-configuration-" + action, None, identifier, why)
+        return redirect(url_for("standalone_setup"))
+
+    @app.route("/mentor/students/<int:sid>/inputs", methods=["GET", "POST"])
+    @transaction
+    def mentor_inputs(sid):
+        access(sid, "mentor")
+        if cfg()[1].get("mapping_profile", {}).get("kind") != "3du-standalone":
+            error("Professional input is waiting for standalone configuration.", 409)
+        entry = one(
+            "SELECT * FROM professional_entries WHERE student_id=? AND actor_id=?",
+            (sid, g.user["id"]),
+        )
+        if request.method == "GET":
+            return render_template("professional_input.html", sid=sid, entry=entry)
+        d = data()
+        if d.get("action") not in ["save", "submit"]:
+            error("Choose Save draft or Submit.")
+        expected = str(d.get("expected_version", ""))
+        if not expected.isdigit() or int(expected) != (entry["version"] if entry else 0):
+            error("Your notes changed. Reload and review.", 409)
+        values = {k: d.get(k, "") for k in ["Mentor Notes", "Previous Interaction Notes"]}
+        if any(not isinstance(x, str) or len(x) > 20000 for x in values.values()):
+            error("Notes must be text of at most 20,000 characters.")
+        submitted = d["action"] == "submit"
+        if submitted and not values["Mentor Notes"].strip():
+            error("Mentor Notes are required before submission.")
+        if not entry:
+            identifier = (
+                db()
+                .execute(
+                    "INSERT INTO professional_entries(student_id,actor_id,updated) VALUES(?,?,?)",
+                    (sid, g.user["id"], now()),
+                )
+                .lastrowid
+            )
+            entry = one("SELECT * FROM professional_entries WHERE id=?", (identifier,))
+        version = entry["version"] + 1
+        db().execute(
+            "UPDATE professional_entries SET draft=?,version=?,updated=?,submitted=CASE WHEN ? THEN ? ELSE submitted END WHERE id=?",
+            (packed(values), version, now(), submitted, packed(values), entry["id"]),
+        )
+        if submitted:
+            db().execute(
+                "INSERT INTO professional_versions VALUES(?,?,?,?)",
+                (entry["id"], version, packed(values), now()),
+            )
+            # Use the same source-attribution convention as student/parent evidence.
+            spec = private_mapping_spec(cfg()[1])
+            for label, statement in values.items():
+                source = f"Intake: {label} [actor={g.user['id']};spec={spec['sha256']}]"
+                old = one(
+                    "SELECT id FROM evidence WHERE student_id=? AND source=? AND NOT EXISTS(SELECT 1 FROM evidence newer WHERE newer.corrected_from=evidence.id) ORDER BY id DESC LIMIT 1",
+                    (sid, source),
+                )
+                db().execute(
+                    "INSERT INTO evidence(student_id,stakeholder,source,type,statement,corrected_from) VALUES(?,?,?,?,?,?)",
+                    (
+                        sid,
+                        "mentor",
+                        source,
+                        "mentor note" if label == "Mentor Notes" else "previous interaction note",
+                        statement,
+                        old["id"] if old else None,
+                    ),
+                )
+            invalidate(sid, "Mentor submitted attributable notes; new snapshot required.")
+        audit("professional-input-" + d["action"], sid, entry["id"], "Own involved-mentor input")
+        return redirect(url_for("mentor_inputs", sid=sid))
 
     def own_intake(sid):
         access(sid, "student", "parent")
@@ -1697,6 +1999,22 @@ def create_app(test_config=None):
             "Own attributed intake; no stage completion or report publication",
         )
         return jsonify(result) if request.is_json else redirect(url_for("intake_page", sid=sid))
+
+    @app.cli.command("backup-db")
+    def backup_db():
+        """Consistent SQLite backup including committed WAL data; trusted host console."""
+        folder = Path(app.config["DATABASE"]).parent / "backups"
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target = folder / (
+            "3du-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f") + ".sqlite3"
+        )
+        connection = sqlite3.connect(target)
+        try:
+            db().backup(connection)
+        finally:
+            connection.close()
+        os.chmod(target, 0o600)
+        click.echo("Private database backup saved: " + str(target))
 
     @app.cli.command("init-db")
     def init_db():

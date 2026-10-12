@@ -130,7 +130,10 @@ def config_validate(c):
                     }
                 ),
                 "mapping_profile": obj(
-                    {"kind": {"const": "mindpal-four-step"}, "source_sha256": SHORT}
+                    {
+                        "kind": {"enum": ["mindpal-four-step", "3du-standalone"]},
+                        "source_sha256": SHORT,
+                    }
                 ),
                 "stage_rules": {
                     "type": "object",
@@ -377,6 +380,12 @@ def validate_maps(c, maps):
             ("empathy", c["empathy_categories"]),
             ("journey", c["journey_stages"]),
         ]:
+            if suffix == "journey" and c.get("mapping_profile", {}).get("kind") == "3du-standalone":
+                if maps[role + "_journey"]["items"]:
+                    raise ValueError(
+                        "Public journeys must be concise reviewed summaries, not stage arrays"
+                    )
+                continue
             if [x["label"] for x in maps[role + "_" + suffix]["items"]] != options:
                 raise ValueError("Public maps must match the supplied categories/stages")
     return maps

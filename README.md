@@ -89,3 +89,5 @@ Supply the missing detailed mapping specification, approved instruments and crit
 ## Supplied mapping workflow
 
 See [private export import and intake setup](docs/mindpal-import.md). Apply migration 003, import the user-supplied JSON and original mapping prompt privately, then configure remaining readiness/provider decisions. Persistent student/parent intake and all four mapping definitions—including the exact eighteen stages—are supported; provider credentials and source-backed readiness decisions are still absent. No extra scoring, career ranking or automatic mentor matching branch is enabled.
+
+Standalone 3DU configuration: follow [the existing-site update guide](docs/standalone-hosting.md). The new `import-3du-mapping` loader accepts the private standalone JSON directly and has no MindPal runtime dependency. Team setup requires a separately provisioned capability. Four private steps produce six shared outputs; analytical journey arrays remain internal. Missing provider, professional-note applicability, educator scope, readiness/content and policy decisions stay visibly blocked.

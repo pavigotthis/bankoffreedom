@@ -297,7 +297,7 @@ def compiled_instructions(step, spec):
     return spec["steps"][step - 1]["system"] + "\n\n" + prompt
 
 
-def report_draft(outputs):
+def report_draft(outputs, concise=False):
     """Explicit six-map preview, excluding source evidence, confidence and private factors."""
     maps: dict[str, dict] = {}
     for role in ["student", "parent"]:
@@ -334,4 +334,10 @@ def report_draft(outputs):
                 for row in outputs[4][role]
             ],
         }
+    if concise:
+        for role in ["student", "parent"]:
+            maps[role + "_journey"] = {
+                "summary": "Journey summary requires admin editing before approval.",
+                "items": [],
+            }
     return maps
